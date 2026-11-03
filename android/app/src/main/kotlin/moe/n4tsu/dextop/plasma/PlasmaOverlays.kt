@@ -250,34 +250,34 @@ internal class PlasmaAppRepository(private val context: Context) {
             ?.ifEmpty { runCatching { manager.queryIntentActivities(query, 0) }.getOrNull().orEmpty() }
             .orEmpty()
         if (resolved.isNotEmpty()) {
+            // One broken icon/label must not drop the whole list.
             return@runCatching resolved
-                .asSequence()
-                .distinctBy { it.activityInfo.packageName }
-                .map {
-                    PlasmaApp(
-                        it.activityInfo.packageName,
-                        it.loadLabel(manager).toString(),
-                        it.loadIcon(manager),
-                        it.activityInfo.applicationInfo.category,
-                    )
+                .mapNotNull { ri ->
+                    runCatching {
+                        PlasmaApp(
+                            ri.activityInfo.packageName,
+                            ri.loadLabel(manager).toString(),
+                            ri.loadIcon(manager),
+                            ri.activityInfo.applicationInfo.category,
+                        )
+                    }.getOrNull()
                 }
+                .distinctBy { it.packageName }
                 .sortedBy { it.label.lowercase() }
-                .toList()
         }
         runCatching { manager.getInstalledApplications(0) }.getOrNull().orEmpty()
             .mapNotNull { info ->
-                runCatching { manager.getLaunchIntentForPackage(info.packageName) }.getOrNull()?.let {
-                    PlasmaApp(
+                runCatching {
+                    if (manager.getLaunchIntentForPackage(info.packageName) == null) null else PlasmaApp(
                         info.packageName,
                         manager.getApplicationLabel(info).toString(),
                         manager.getApplicationIcon(info),
                         info.category,
                     )
-                }
+                }.getOrNull()
             }
             .distinctBy { it.packageName }
             .sortedBy { it.label.lowercase() }
-            .toList()
     }.getOrDefault(emptyList())
 
     fun find(packageName: String): PlasmaApp? = apps.firstOrNull { it.packageName == packageName }

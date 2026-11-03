@@ -47,16 +47,23 @@ internal class AppCatalog(private val context: Context) {
             .filter { it.activityInfo.packageName != context.packageName }
             .distinctBy { it.activityInfo.packageName }
         if (resolved.isNotEmpty()) {
-            return@runCatching resolved.map {
-                Triple(it.activityInfo.packageName, it.loadLabel(manager).toString(), it.loadIcon(manager))
+            // One broken icon/label must not drop the whole catalog.
+            return@runCatching resolved.mapNotNull { ri ->
+                runCatching {
+                    Triple(ri.activityInfo.packageName, ri.loadLabel(manager).toString(), ri.loadIcon(manager))
+                }.getOrNull()
             }
         }
         runCatching { manager.getInstalledApplications(0) }.getOrNull().orEmpty()
             .filter { it.packageName != context.packageName }
             .mapNotNull { info ->
-                runCatching { manager.getLaunchIntentForPackage(info.packageName) }.getOrNull()?.let {
-                    Triple(info.packageName, manager.getApplicationLabel(info).toString(), manager.getApplicationIcon(info))
-                }
+                runCatching {
+                    if (manager.getLaunchIntentForPackage(info.packageName) == null) null else Triple(
+                        info.packageName,
+                        manager.getApplicationLabel(info).toString(),
+                        manager.getApplicationIcon(info),
+                    )
+                }.getOrNull()
             }
             .distinctBy { it.first }
     }.getOrDefault(emptyList())
