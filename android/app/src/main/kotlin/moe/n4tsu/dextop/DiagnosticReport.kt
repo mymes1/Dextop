@@ -151,7 +151,7 @@ internal class DiagnosticReport(private val context: Context) {
                     sb.append(line(
                         "tasks.${display.displayId}",
                         tasks.joinToString(" ") {
-                            "${it.packageName}:${DisplayWindowing.fromFramework(it.windowingMode).dumpName}:${it.bounds.flattenToShortString()}"
+                            "${it.packageName}:${DisplayWindowing.fromFramework(it.windowingMode).dumpName}:${it.bounds.toShortString()}"
                         }
                     ))
                 }
