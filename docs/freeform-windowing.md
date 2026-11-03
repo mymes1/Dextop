@@ -292,6 +292,11 @@ Stated here so the result is not oversold:
 5. HOME: because the profile id is not `samsung_dex`, `launchHome()` uses
    `Intent.CATEGORY_HOME` instead of the non-existent
    `com.honeyspace.dexservice.SecondaryLauncher`.
+6. The result is the same display configuration Dextop already runs with on a DeX
+   device: a freeform task display area, with Dextop's own shell (or the system window
+   manager) placing the tasks. Dextop's shells and desktop activities are launched as HOME
+   type tasks on that display, which the framework never windows, so the desktop keeps
+   covering the display while application tasks become windows.
 
 ---
 
