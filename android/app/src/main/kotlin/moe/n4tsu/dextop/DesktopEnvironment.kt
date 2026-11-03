@@ -9,13 +9,26 @@ internal data class DeviceIdentity(
     val device: String,
     val product: String,
     val fingerprint: String,
-    val sdk: Int
+    val sdk: Int,
+    /**
+     * Whether this firmware ships a platform desktop that manages windowing
+     * itself (Samsung DeX). `null` means "not probed": every rule keeps the
+     * assumption it was written for, so tests and callers that only have a
+     * [Build] snapshot do not change behaviour. Production always probes, see
+     * [DeviceIdentity.current] with a Context.
+     */
+    val platformDesktopAvailable: Boolean? = null
 ) {
     companion object {
         fun current() = DeviceIdentity(
             Build.MANUFACTURER, Build.BRAND, Build.MODEL, Build.DEVICE,
             Build.PRODUCT, Build.FINGERPRINT, Build.VERSION.SDK_INT
         )
+
+        fun current(context: android.content.Context): DeviceIdentity =
+            current().copy(
+                platformDesktopAvailable = DesktopStackProbe.current(context).platformDesktop
+            )
     }
 }
 
@@ -123,7 +136,22 @@ internal data class DesktopEnvironment(
      * window (Settings, permission dialogs); it also shows the overlay
      * preview window on the phone.
      */
-    val directPlasmaDisplay: Boolean = false
+    val directPlasmaDisplay: Boolean = false,
+    /**
+     * Dextop's own window manager positions and resizes every application it
+     * shows, which requires the Dextop display itself to be a freeform
+     * desktop. Firmware with a platform desktop (DeX) already reports
+     * freeform; firmware without one launches every activity fullscreen
+     * unless Dextop switches the display, so the session verifies the
+     * display's windowing mode and escalates when it is not freeform.
+     */
+    val requiresFreeformDisplay: Boolean = false,
+    /**
+     * Window-stack settings applied only when the display turns out not to be
+     * a freeform desktop. Journaled like every other temporary global and
+     * restored when the session ends.
+     */
+    val freeformFallbackSettings: Map<String, String?> = emptyMap()
 )
 
 internal enum class DesktopStartupMode {
@@ -137,7 +165,7 @@ internal enum class DisplayChromeMode {
     VISIBLE
 }
 
-private object AndroidDesktopOverrides {
+internal object AndroidDesktopOverrides {
     val modernKeys = listOf(
         "override_desktop_experience_features",
         "override_desktop_mode_features",
@@ -153,6 +181,22 @@ private object AndroidDesktopOverrides {
         "enable_freeform_support" to "1",
         "force_desktop_mode_on_external_displays" to "1"
     )
+
+    /**
+     * Android's window-stack switches for a display Dextop windows itself.
+     *
+     * `force_desktop_mode_on_external_displays` is deliberately absent: it
+     * changes the default policy of *every* public secondary display,
+     * including the private application displays the compositing shell draws
+     * inside its own windows, where apps must keep filling their display.
+     * The Dextop display itself is switched explicitly with
+     * `IWindowManager#setWindowingMode` instead (see [DisplayWindowingBridge]).
+     */
+    val windowedDesktopValues = linkedMapOf(
+        "enable_freeform_support" to "1",
+        "force_resizable_activities" to "1",
+        "enable_non_resizable_multi_window" to "1"
+    )
 }
 
 internal data class DesktopEnvironmentRule(
@@ -166,7 +210,9 @@ internal data class DesktopEnvironmentRule(
  * cannot affect another device. Runtime capability probes remain authoritative.
  */
 internal object DesktopEnvironmentRegistry {
-    fun current(): DesktopEnvironment = resolve(DeviceIdentity.current())
+    /** Resolves with the runtime probe, which is what production always wants. */
+    fun current(context: android.content.Context): DesktopEnvironment =
+        resolve(DeviceIdentity.current(context))
 
     fun resolve(identity: DeviceIdentity): DesktopEnvironment {
         val rule = DeviceProfiles.rules.firstOrNull { it.match.matches(identity) }
@@ -192,8 +238,50 @@ internal object DesktopEnvironmentRegistry {
     internal fun samsungDex(autoResizeWithHostDisplay: Boolean = false) = DesktopEnvironment(
         "samsung_dex", "Samsung DeX", true, emptyMap(), false,
         DesktopStartupMode.OEM_MANAGED, DisplayChromeMode.HIDDEN,
-        autoResizeWithHostDisplay = autoResizeWithHostDisplay
+        autoResizeWithHostDisplay = autoResizeWithHostDisplay,
+        // DeX normally owns the freeform policy of its displays. The session
+        // still verifies that this display really is freeform: on firmware
+        // that keeps the DeX service but does not put virtual displays into
+        // desktop mode (Galaxy Tab A9, SM-X110), nothing else would.
+        requiresFreeformDisplay = true,
+        freeformFallbackSettings = AndroidDesktopOverrides.windowedDesktopValues
     )
+
+    /**
+     * Samsung firmware without a DeX desktop.
+     *
+     * Galaxy Tab A9 (SM-X110) is the reference device: One UI 7 / Android 15,
+     * no DeX service, no `SecondaryLauncher`, and no per-display windowing
+     * policy, so the old manufacturer-wide Samsung rule configured nothing
+     * and every activity filled the Dextop display. This profile is the AOSP
+     * freeform profile with Samsung's chrome and launcher expectations
+     * removed, plus the windowing settings Dextop has to apply itself.
+     */
+    internal fun samsungWindowedDesktop(identity: DeviceIdentity): DesktopEnvironment =
+        aospFreeform(identity).copy(
+            id = "samsung_windowed",
+            displayName = NativeStrings.text("nativeAndroidDesktopFreeform"),
+            platformManaged = false,
+            // The AOSP compat values force desktop mode on *every* public
+            // secondary display, which would also turn the compositing
+            // shell's own application displays into floating windows. Only
+            // the switches that make freeform possible are applied here; the
+            // Dextop display itself is switched per display.
+            temporaryGlobalSettings = AndroidDesktopOverrides.windowedDesktopValues,
+            // Android 15 has no `wm set-display-windowing-mode`; the display is
+            // switched through IWindowManager#setWindowingMode, which
+            // DesktopModeConfigurator uses before these legacy commands.
+            configureFreeformWindowing = true,
+            startupMode = DesktopStartupMode.COMPAT_WINDOWING,
+            // System decorations give each freeform task the platform caption
+            // (drag bar, close, maximise), which is what makes a window
+            // resizable by touch without a Dextop-drawn frame. There is no
+            // DeX taskbar on this firmware to conflict with.
+            displayChromeMode = DisplayChromeMode.VISIBLE,
+            defaultWindowManager = "dextop_book",
+            requiresFreeformDisplay = true,
+            freeformFallbackSettings = AndroidDesktopOverrides.windowedDesktopValues
+        )
 
     internal fun aospFreeform(identity: DeviceIdentity): DesktopEnvironment {
         val platformNative = identity.sdk >= 36
@@ -232,7 +320,15 @@ internal object DesktopEnvironmentRegistry {
             } else {
                 DesktopStartupMode.COMPAT_WINDOWING
             },
-            displayChromeMode = DisplayChromeMode.VISIBLE
+            displayChromeMode = DisplayChromeMode.VISIBLE,
+            // Verification is always safe: a display the platform already
+            // runs in freeform is left alone.
+            requiresFreeformDisplay = true,
+            freeformFallbackSettings = if (platformNative) {
+                emptyMap()
+            } else {
+                AndroidDesktopOverrides.compatibilityValues
+            }
         )
     }
 }

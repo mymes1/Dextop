@@ -155,7 +155,7 @@ open class MainActivity : FlutterActivity() {
     private fun applyDefaultWindowManager() {
         val preferences = getSharedPreferences("FlutterSharedPreferences", MODE_PRIVATE)
         if (preferences.contains("flutter.window_manager")) return
-        val value = DesktopEnvironmentRegistry.current().defaultWindowManager
+        val value = DesktopEnvironmentRegistry.current(this).defaultWindowManager
         if (value != "system") preferences.edit().putString("flutter.window_manager", value).apply()
     }
 
@@ -871,8 +871,8 @@ open class MainActivity : FlutterActivity() {
             ,"androidVersion" to Build.VERSION.RELEASE
             ,"sdk" to Build.VERSION.SDK_INT
             ,"appVersion" to packageInfo.versionName.orEmpty()
-            ,"desktopMode" to DesktopEnvironmentRegistry.current().displayName
-            ,"defaultWindowManager" to DesktopEnvironmentRegistry.current().defaultWindowManager
+            ,"desktopMode" to DesktopEnvironmentRegistry.current(this).displayName
+            ,"defaultWindowManager" to DesktopEnvironmentRegistry.current(this).defaultWindowManager
         )
         return status
     }
@@ -1084,7 +1084,7 @@ open class MainActivity : FlutterActivity() {
         val height = (arguments?.get("height") as? Number)?.toInt() ?: 1080
         val density = (arguments?.get("density") as? Number)?.toInt() ?: 240
         val secure = arguments?.get("secure") == true
-        val desktopEnvironment = DesktopEnvironmentRegistry.current()
+        val desktopEnvironment = DesktopEnvironmentRegistry.current(this)
         val decorations = (arguments?.get("decorations") as? Boolean)
             ?: (desktopEnvironment.displayChromeMode == DisplayChromeMode.VISIBLE)
         if (width !in 480..7680 || height !in 480..7680 || density !in 80..640) {

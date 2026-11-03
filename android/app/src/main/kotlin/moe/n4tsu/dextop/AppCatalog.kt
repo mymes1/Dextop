@@ -56,25 +56,48 @@ internal class AppCatalog(private val context: Context) {
         }
     }
 
+    /**
+     * Starts [packageName] on [displayId] as an independently positioned
+     * window.
+     *
+     * The freeform launch hint used to be gated on the COMPAT_WINDOWING
+     * profile, so Samsung profiles - including firmware without DeX, where no
+     * platform desktop exists to choose a window mode - asked the framework
+     * for a plain launch and got a fullscreen activity. The hint is now always
+     * requested and only dropped when the platform rejects it.
+     */
     fun launch(packageName: String, displayId: Int, bounds: Rect? = null) {
         require(displayId >= 0) { "Dextop is not running" }
         val intent = context.packageManager.getLaunchIntentForPackage(packageName)
             ?: error(NativeStrings.text("nativeSelectedAppCannotLaunch"))
         intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_RESET_TASK_IF_NEEDED)
         val options = ActivityOptions.makeBasic().setLaunchDisplayId(displayId)
-        // Older releases need an explicit freeform launch hint; newer releases
-        // select their window presentation through the system desktop stack.
-        if (DesktopEnvironmentRegistry.current().startupMode ==
-            DesktopStartupMode.COMPAT_WINDOWING
-        ) {
-            runCatching {
-                ActivityOptions::class.java.getMethod(
-                    "setLaunchWindowingMode",
-                    Int::class.javaPrimitiveType
-                ).invoke(options, 5)
-            }
-        }
-        if (bounds != null) options.launchBounds = bounds
-        context.startActivity(intent, options.toBundle())
+        val freeformRequested = applyFreeformWindowing(options)
+        if (bounds != null && !bounds.isEmpty) options.launchBounds = bounds
+        val first = runCatching { context.startActivity(intent, options.toBundle()) }
+        if (first.isSuccess) return
+        // A vendor ActivityTaskManager can reject an explicit windowing mode
+        // for one activity. Launching without it still puts the task on the
+        // right display, where the shell can turn it into a window.
+        OperationLog.w(
+            context,
+            "AppLaunch",
+            "freeform launch rejected package=$packageName display=$displayId freeform=$freeformRequested",
+            first.exceptionOrNull()
+        )
+        val plain = ActivityOptions.makeBasic().setLaunchDisplayId(displayId)
+        if (bounds != null && !bounds.isEmpty) plain.launchBounds = bounds
+        val second = runCatching { context.startActivity(intent, plain.toBundle()) }
+        second.exceptionOrNull()?.let { throw it }
     }
+
+    /** True when the platform exposes the explicit freeform launch request. */
+    private fun applyFreeformWindowing(options: ActivityOptions): Boolean = runCatching {
+        ActivityOptions::class.java
+            .getMethod("setLaunchWindowingMode", Int::class.javaPrimitiveType)
+            .invoke(options, DisplayWindowing.FREEFORM.frameworkValue)
+        true
+    }.onFailure {
+        OperationLog.w(context, "AppLaunch", "setLaunchWindowingMode unavailable", it)
+    }.getOrDefault(false)
 }

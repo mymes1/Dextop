@@ -1,5 +1,21 @@
 # Changelog
 
+## Unreleased
+
+### 日本語
+
+#### 修正
+
+- Samsung製でDeX非対応の端末（Galaxy Tab A9 / SM-X110 など）で、仮想デスクトップ上のアプリが全画面表示になってしまう問題を修正しました。端末のウィンドウスタックを判定してプロファイルを選択し、Android 15 でも利用できる `IWindowManager#setWindowingMode` で仮想ディスプレイをフリーフォームに切り替え、`ActivityOptions` でフリーフォーム起動を要求し、起動後のタスクのモードと境界を検証します。詳細は `docs/freeform-windowing.md` を参照してください。
+- `wm set-display-windowing-mode` は Android 16 以降にのみ存在するため、API 35 では実行しないようにしました。
+
+### English
+
+#### Fixes
+
+- Fixed applications opening fullscreen in Dextop's virtual desktop on Samsung devices without DeX (Galaxy Tab A9 / SM-X110 and similar). The profile is now chosen from the firmware's actual window stack, the virtual display is switched to freeform through `IWindowManager#setWindowingMode` (which exists on Android 15), launches request a freeform window through `ActivityOptions`, and the resulting task's mode and bounds are verified. See `docs/freeform-windowing.md`.
+- `wm set-display-windowing-mode` only exists on Android 16 and later and is no longer attempted on API 35.
+
 ## 1.7.0
 
 ### 日本語

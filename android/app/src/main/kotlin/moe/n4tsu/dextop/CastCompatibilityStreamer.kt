@@ -47,7 +47,7 @@ internal class CastCompatibilityStreamer(
         context.contentResolver,
         context.getSystemService(DisplayManager::class.java),
         privilegedAccess,
-        DesktopEnvironmentRegistry.current()
+        DesktopEnvironmentRegistry.current(context)
     )
     private val width: Int
     private val height: Int

@@ -669,16 +669,31 @@ class MirrorService : AccessibilityService(), SurfaceHolder.Callback {
                         "AppLaunch",
                         "startActivity accepted package=$packageName display=${service.targetDisplayId}"
                     )
+                    service.scheduleWindowLaunchRepair(packageName, fittedBounds)
                     service.scheduleWindowLaunchDiagnostics("after_app_launch")
-                }.onFailure {
-                    Log.e(service.logTag, "app launch failed", it)
+                }.recoverCatching { error ->
+                    Log.e(service.logTag, "app launch failed", error)
                     OperationLog.e(
                         service,
                         "AppLaunch",
                         "startActivity failed package=$packageName display=${service.targetDisplayId}",
-                        it
+                        error
                     )
-                    service.scheduleWindowLaunchDiagnostics("app_launch_failure", delayMs = 0L)
+                    // A vendor ActivityTaskManager can refuse Dextop's own uid a
+                    // launch onto an app-owned display. Launching as the shell
+                    // with an explicit freeform mode is the documented
+                    // `am start` path and works on Android 15 (the
+                    // `--windowingMode` option predates the desktop shell).
+                    check(service.privilegedAppLaunch(packageName)) { "privileged launch refused" }
+                    service.launchedAppBounds[packageName] = fittedBounds
+                        ?: Rect(0, 0, service.targetWidth, service.targetHeight)
+                    OperationLog.i(
+                        service,
+                        "AppLaunch",
+                        "privileged launch accepted package=$packageName display=${service.targetDisplayId} windowingMode=freeform"
+                    )
+                    service.scheduleWindowLaunchRepair(packageName, fittedBounds)
+                    service.scheduleWindowLaunchDiagnostics("after_privileged_app_launch")
                 }.isSuccess
             } ?: false
 
@@ -694,6 +709,9 @@ class MirrorService : AccessibilityService(), SurfaceHolder.Callback {
             // exactly once; WorkspaceLayoutEngine has already fitted the bounds.
             launchPackage(packageName, bounds)
         } ?: false
+
+        /** The last windowing verdict of the running session, or an empty string. */
+        fun windowingDiagnostics(): String = instance?.windowingSummary().orEmpty()
 
         fun inputMode(): String = instance?.let {
             when {
@@ -1012,12 +1030,19 @@ class MirrorService : AccessibilityService(), SurfaceHolder.Callback {
     private val useLegacyPixelMirrorProfile by lazy { PixelMirrorFallback.shouldUse(this) }
     private val desktopEnvironment by lazy {
         if (useLegacyPixelMirrorProfile) {
-            DesktopEnvironmentRegistry.legacyPixelAosp(DeviceIdentity.current())
+            DesktopEnvironmentRegistry.legacyPixelAosp(DeviceIdentity.current(this))
         } else {
-            DesktopEnvironmentRegistry.current()
+            DesktopEnvironmentRegistry.current(this)
         }
     }
     private val privilegedAccess by lazy { PrivilegedAccess(logTag) }
+    /** Task control shared with the shells, used to verify a launch became a window. */
+    private val launchTaskBridge by lazy {
+        moe.n4tsu.dextop.plasma.TaskBridge(
+            { name, interfaceName -> privilegedAccess.service(name, interfaceName) },
+            logTag
+        )
+    }
     private val desktopModeConfigurator by lazy {
         DesktopModeConfigurator(this, contentResolver, privilegedAccess, desktopEnvironment, sessionJournal)
     }
@@ -3190,6 +3215,9 @@ class MirrorService : AccessibilityService(), SurfaceHolder.Callback {
         runCatching { shell.stop(restoreWindows) }
             .onFailure { OperationLog.w(this, "PlasmaShell", "shell shutdown failed", it) }
     }
+
+    /** Latest display-windowing verdict, for the diagnostic report. */
+    internal fun windowingSummary(): String = desktopModeConfigurator.latestReport()?.summary().orEmpty()
 
     private fun effectiveConfig(config: Config): Config {
         // Laptop mode is applied only after its two panes have completed layout.
@@ -8210,6 +8238,110 @@ class MirrorService : AccessibilityService(), SurfaceHolder.Callback {
         }
     }
 
+    /**
+     * Verifies that a requested app launch really became a freeform window and
+     * repairs it once when the framework placed the task fullscreen.
+     *
+     * This is the per-launch half of the freeform compatibility work: the
+     * display-level mode makes new tasks freeform, and this catches the apps
+     * whose own activity record (fullscreen-only, fixed orientation, or a
+     * vendor policy) ignored it. It never claims success: when neither the
+     * windowing mode nor the bounds can be changed, the task stays as the
+     * framework made it and the failure is recorded for the diagnostic report.
+     */
+    /**
+     * Shell-side launch used when the framework refuses Dextop's own uid.
+     *
+     * `am start --display <id> --windowingMode 5` exists on Android 15, while
+     * the per-display windowing-mode *shell command* does not. Bounds are set
+     * afterwards by [repairLaunchedTaskWindow] because `am` has no bounds option
+     * on this release.
+     */
+    private fun privilegedAppLaunch(packageName: String): Boolean {
+        if (targetDisplayId < 0 || !privilegedAccess.isAvailable()) return false
+        val component = packageManager.getLaunchIntentForPackage(packageName)
+            ?.resolveActivity(packageManager) ?: return false
+        val result = privilegedAccess.execute(
+            "am", "start",
+            "--display", targetDisplayId.toString(),
+            "--windowingMode", DisplayWindowing.FREEFORM.frameworkValue.toString(),
+            "-f", "0x10200000",
+            "-n", component.flattenToShortString()
+        )
+        if (!result.succeeded) {
+            OperationLog.w(
+                this,
+                "AppLaunch",
+                "privileged launch failed package=$packageName display=$targetDisplayId " +
+                    "detail=${result.error.ifBlank { result.output }}",
+                null
+            )
+        }
+        return result.succeeded
+    }
+
+    private fun scheduleWindowLaunchRepair(packageName: String, expected: Rect?) {
+        val displayId = targetDisplayId
+        if (displayId < 0) return
+        listOf(500L, 1_400L).forEachIndexed { index, delay ->
+            postMainDelayed(delay) {
+                if (!active || targetDisplayId != displayId) return@postMainDelayed
+                windowDiagnosticExecutor.execute {
+                    if (!active || targetDisplayId != displayId) return@execute
+                    repairLaunchedTaskWindow(packageName, displayId, expected, attempt = index + 1)
+                }
+            }
+        }
+    }
+
+    private fun repairLaunchedTaskWindow(
+        packageName: String,
+        displayId: Int,
+        expected: Rect?,
+        attempt: Int
+    ) {
+        val tasks = runCatching { launchTaskBridge.tasks(displayId) }
+            .onFailure { Log.w(logTag, "launch verification query failed", it) }
+            .getOrNull() ?: return
+        val task = tasks.firstOrNull {
+            it.packageName == packageName &&
+                it.activityType == moe.n4tsu.dextop.plasma.TaskBridge.ACTIVITY_TYPE_STANDARD
+        } ?: return
+        if (task.windowingMode == moe.n4tsu.dextop.plasma.TaskBridge.WINDOWING_MODE_FREEFORM) {
+            OperationLog.i(
+                this,
+                "AppLaunch",
+                "window verified package=$packageName display=$displayId attempt=$attempt " +
+                    "task=${task.taskId} bounds=${task.bounds}"
+            )
+            return
+        }
+        val target = expected?.takeUnless { it.isEmpty }
+            ?: launchedAppBounds[packageName]?.takeUnless { it.isEmpty }
+            ?: Rect(0, 0, targetWidth, targetHeight)
+        val modeChanged = launchTaskBridge.setWindowingMode(
+            task,
+            moe.n4tsu.dextop.plasma.TaskBridge.WINDOWING_MODE_FREEFORM
+        )
+        val placed = launchTaskBridge.setBounds(task, target)
+        OperationLog.i(
+            this,
+            "AppLaunch",
+            "window repair package=$packageName display=$displayId attempt=$attempt " +
+                "task=${task.taskId} mode=${task.windowingMode} -> freeform=$modeChanged " +
+                "bounds=${task.bounds} -> $target placed=$placed"
+        )
+        if (!modeChanged && !placed) {
+            OperationLog.w(
+                this,
+                "AppLaunch",
+                "framework kept package=$packageName fullscreen display=$displayId task=${task.taskId}; " +
+                    "the activity declares a windowing restriction Dextop cannot override",
+                null
+            )
+        }
+    }
+
     private fun collectWindowLaunchDiagnostics(reason: String, displayId: Int) {
         if (displayId < 0) return
         val taskCommand =
@@ -12187,6 +12319,9 @@ class MirrorService : AccessibilityService(), SurfaceHolder.Callback {
             val existing = displayBackend.currentDisplayIds()
             val staleOverlays = displayBackend.overlayDisplayIds()
             desktopModeConfigurator.applyForCurrentDevice()
+            // Window-stack settings have to be in place before the display
+            // exists, or the first task on it is created fullscreen.
+            desktopModeConfigurator.prepareDesktopWindowing()
             clearOverlayDisplayRequestTwice("before_display_create")
             root?.postDelayed({
                 waitForOverlayRequestCleared(
@@ -12226,6 +12361,7 @@ class MirrorService : AccessibilityService(), SurfaceHolder.Callback {
                 OperationLog.i(this, "CapabilityProbe", "$name supported=${probe.supported} detail=${probe.detail}")
             }
             desktopModeConfigurator.applyForCurrentDevice()
+            desktopModeConfigurator.prepareDesktopWindowing()
             clearOverlayDisplayRequestTwice("before_direct_phone_display_create")
             val platform = VirtualDisplayPlatform.inspect()
             val service = privilegedAccess.service("display", VirtualDisplayPlatform.MANAGER_INTERFACE)
