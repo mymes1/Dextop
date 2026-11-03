@@ -118,4 +118,4 @@ htmlcov/
 .cache/
 tmp/
 temp/
-local/
+/local/
