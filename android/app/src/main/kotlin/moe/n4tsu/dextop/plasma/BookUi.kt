@@ -122,6 +122,7 @@ import androidx.lifecycle.setViewTreeLifecycleOwner
 import androidx.lifecycle.setViewTreeViewModelStoreOwner
 import androidx.savedstate.setViewTreeSavedStateRegistryOwner
 import kotlinx.coroutines.withTimeoutOrNull
+import moe.n4tsu.dextop.OperationLog
 import java.util.Locale
 import kotlin.math.ceil
 import kotlin.math.roundToInt
@@ -990,19 +991,28 @@ internal class BookUi(
      * Needs a laid-out [area]; called from [place] and the store listener.
      */
     fun syncHomeApps() {
-        if (area.width() <= 1 || area.height() <= 1) return
+        if (area.width() <= 1 || area.height() <= 1) {
+            OperationLog.w(context, "BookHome", "syncHomeApps skipped: display area not known yet area=$area")
+            return
+        }
         val home = BookStore.homeApps(context)
         val current = BookStore.shortcuts(context)
         // Deselected or uninstalled apps leave the home screen.
-        current
+        val removed = current
             .filter {
                 !it.packageName.startsWith(LINUX_DESKTOP_PREFIX) &&
                     (it.packageName !in home || !isInstalled(it.packageName))
             }
-            .forEach { BookStore.removeShortcut(context, it.packageName) }
+        removed.forEach { BookStore.removeShortcut(context, it.packageName) }
         // Newly selected apps take the nearest free cell.
         val placed = BookStore.shortcuts(context).map { it.packageName }.toSet()
-        home.filter { it !in placed && isInstalled(it) }.forEach { addShortcut(it, null) }
+        val missing = home.filter { it !in placed && isInstalled(it) }
+        missing.forEach { addShortcut(it, null) }
+        OperationLog.i(
+            context, "BookHome",
+            "syncHomeApps area=${area.width()}x${area.height()} home=${home.size} shortcuts=${current.size} " +
+                "removed=${removed.size} placed=${missing.size} grid=${gridColumns()}x${gridRows()}"
+        )
     }
 
     /** The app for a desktop shortcut even before the launcher's list has loaded. */

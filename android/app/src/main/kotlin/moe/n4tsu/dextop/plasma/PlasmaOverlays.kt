@@ -17,6 +17,7 @@ import android.view.Gravity
 import android.view.View
 import android.view.WindowManager
 import android.widget.TextView
+import moe.n4tsu.dextop.OperationLog
 import java.util.concurrent.Executors
 
 /**
@@ -221,15 +222,35 @@ internal class PlasmaAppRepository(private val context: Context) {
 
     fun refresh(done: () -> Unit) {
         executor.execute {
-            val manager = context.packageManager
-            val query = Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_LAUNCHER)
-            // Some vendor firmware (seen on Samsung One UI without DeX, e.g.
-            // SM-X110) filters the MATCH_ALL query down to nothing; fall back to
-            // the plain query so the launcher and the desktop home screen are
-            // never empty.
-            val resolved = manager.queryIntentActivities(query, PackageManager.MATCH_ALL)
-                .ifEmpty { manager.queryIntentActivities(query, 0) }
-            val loaded = resolved
+            try {
+                val loaded = loadApps()
+                synchronized(iconCache) { loaded.forEach { iconCache[it.packageName] = it.icon } }
+                apps = loaded
+                OperationLog.i(context, "AppList", "launcher apps loaded count=${loaded.size}")
+            } catch (t: Throwable) {
+                // Never leave the list silently empty: the launcher, the desktop
+                // home screen and the phone app all read it.
+                OperationLog.e(context, "AppList", "launcher apps query failed", t)
+            } finally {
+                android.os.Handler(android.os.Looper.getMainLooper()).post(done)
+            }
+        }
+    }
+
+    /**
+     * Every launchable app. MATCH_ALL disables result filtering; some vendor
+     * firmware (Samsung One UI without DeX, e.g. SM-X110) throws on it or
+     * returns nothing, so fall back to the plain query and finally to
+     * enumerating installed applications via their launch intents.
+     */
+    private fun loadApps(): List<PlasmaApp> = runCatching {
+        val manager = context.packageManager
+        val query = Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_LAUNCHER)
+        val resolved = runCatching { manager.queryIntentActivities(query, PackageManager.MATCH_ALL) }.getOrNull()
+            ?.ifEmpty { runCatching { manager.queryIntentActivities(query, 0) }.getOrNull().orEmpty() }
+            .orEmpty()
+        if (resolved.isNotEmpty()) {
+            return@runCatching resolved
                 .asSequence()
                 .distinctBy { it.activityInfo.packageName }
                 .map {
@@ -242,11 +263,22 @@ internal class PlasmaAppRepository(private val context: Context) {
                 }
                 .sortedBy { it.label.lowercase() }
                 .toList()
-            synchronized(iconCache) { loaded.forEach { iconCache[it.packageName] = it.icon } }
-            apps = loaded
-            android.os.Handler(android.os.Looper.getMainLooper()).post(done)
         }
-    }
+        runCatching { manager.getInstalledApplications(0) }.getOrNull().orEmpty()
+            .mapNotNull { info ->
+                runCatching { manager.getLaunchIntentForPackage(info.packageName) }.getOrNull()?.let {
+                    PlasmaApp(
+                        info.packageName,
+                        manager.getApplicationLabel(info).toString(),
+                        manager.getApplicationIcon(info),
+                        info.category,
+                    )
+                }
+            }
+            .distinctBy { it.packageName }
+            .sortedBy { it.label.lowercase() }
+            .toList()
+    }.getOrDefault(emptyList())
 
     fun find(packageName: String): PlasmaApp? = apps.firstOrNull { it.packageName == packageName }
 

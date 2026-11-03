@@ -432,15 +432,17 @@ open class MainActivity : FlutterActivity() {
                     result.success(null)
                 }
                 "apps" -> Thread {
-                    val apps = AppCatalog(this).launchableApps()
+                    // Always reply, even if the query fails, so the Flutter side
+                    // never waits forever for a result.
+                    val apps = runCatching { AppCatalog(this).launchableApps() }.getOrDefault(emptyList())
                     runOnUiThread { result.success(apps) }
                 }.start()
                 "appsMetadata" -> Thread {
-                    val apps = AppCatalog(this).launchableApps(includeIcons = false)
+                    val apps = runCatching { AppCatalog(this).launchableApps(includeIcons = false) }.getOrDefault(emptyList())
                     runOnUiThread { result.success(apps) }
                 }.start()
                 "appIcons" -> Thread {
-                    val icons = AppCatalog(this).launchableAppIcons()
+                    val icons = runCatching { AppCatalog(this).launchableAppIcons() }.getOrDefault(emptyMap())
                     runOnUiThread { result.success(icons) }
                 }.start()
                 // The apps shown on Dextop Book's desktop home screen.

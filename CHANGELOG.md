@@ -27,6 +27,7 @@
 - `wm set-display-windowing-mode` only exists on Android 16 and later and is no longer attempted on API 35.
 - Fixed the Dextop Book home screen showing no apps on first start: the usual apps (browser, files, settings, …) are now placed on the desktop automatically, and desktop icons fall back to PackageManager data while the launcher's app list is still loading.
 - On some devices (Samsung One UI without DeX), the launcher query with `MATCH_ALL` can return nothing; it now falls back to the plain query so the app list is never empty.
+- Made app-list loading robust end to end: if the `MATCH_ALL` query throws or comes back empty on a device, the code falls back to the plain query and finally to enumerating installed apps via their launch intents, so the launcher, the Book desktop, the phone home screen and the settings picker can never end up empty. Also fixed first-run seeding so an empty list saved while queries were broken no longer blocks re-seeding (only a deliberately empty or absent selection is re-seeded), and seeding/placement/query counts are now written to the operation log for on-device diagnosis.
 
 ## 1.7.0
 

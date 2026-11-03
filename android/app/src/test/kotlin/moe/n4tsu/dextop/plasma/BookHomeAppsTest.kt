@@ -2,6 +2,7 @@ package moe.n4tsu.dextop.plasma
 
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFalse
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
@@ -41,5 +42,17 @@ class BookHomeAppsTest {
     @Test fun defaultHomeAppsAreUniquePackageNames() {
         assertEquals(bookDefaultHomeApps.size, bookDefaultHomeApps.toSet().size)
         assertTrue(bookDefaultHomeApps.all { it.startsWith("com.") || it.startsWith("org.") })
+    }
+
+    @Test fun homeAppsConfiguredOnlyWhenDeliberatelySet() {
+        // Marked as configured (seeded or chosen by the user), even if empty.
+        assertTrue(BookStore.homeAppsConfigured(seededMarker = true, stored = null))
+        assertTrue(BookStore.homeAppsConfigured(seededMarker = true, stored = emptyList()))
+        // Stored non-empty list counts as configured.
+        assertTrue(BookStore.homeAppsConfigured(seededMarker = false, stored = listOf("com.android.chrome")))
+        // Absent key, or an empty stored list without the marker (a seed that ran
+        // while app queries were broken), may be re-seeded.
+        assertFalse(BookStore.homeAppsConfigured(seededMarker = false, stored = null))
+        assertFalse(BookStore.homeAppsConfigured(seededMarker = false, stored = emptyList()))
     }
 }

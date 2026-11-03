@@ -35,7 +35,9 @@ import android.view.InputDevice
 import android.view.Surface
 import android.view.View
 import android.widget.FrameLayout
+import moe.n4tsu.dextop.AppCatalog
 import moe.n4tsu.dextop.DisplayEnvironmentSettings
+import moe.n4tsu.dextop.OperationLog
 import moe.n4tsu.dextop.linux.LinuxContainerClient
 import moe.n4tsu.dextop.linux.LinuxSteam
 import moe.n4tsu.dextop.linux.LinuxKeymap
@@ -825,8 +827,12 @@ internal abstract class CompositedWindowShell(
     }
 
     private fun ensureDefaults() {
-        val candidates = bookDefaultHomeApps
-            .filter { runCatching { service.packageManager.getLaunchIntentForPackage(it) != null }.getOrDefault(false) }
+        // Resolve launchable defaults through the robust catalog query: on some
+        // vendor firmware (Samsung One UI without DeX, e.g. SM-X110) the plain
+        // getLaunchIntentForPackage / intent-query calls come back empty or
+        // throw, which must not leave Book's home screen without apps.
+        val launchable = AppCatalog(service).launchablePackages()
+        val candidates = bookDefaultHomeApps.filter { it in launchable }
         if (!prefs.contains("favorites")) {
             prefs.edit()
                 .putString("favorites", candidates.take(12).joinToString(","))
@@ -839,9 +845,20 @@ internal abstract class CompositedWindowShell(
         // First run: put the usual apps on Book's desktop home screen so it is
         // never empty when a session starts (non-DeX devices like the SM-X110
         // start straight into Book). BookUi places them on the grid once the
-        // display area is known.
-        if (!BookStore.hasHomeApps(service)) {
-            BookStore.saveHomeApps(service, candidates.take(8))
+        // display area is known. An empty stored list without the configured
+        // marker means an earlier seed ran while app queries were broken, so it
+        // is retried; never save an empty seed.
+        if (!BookStore.homeAppsConfigured(service)) {
+            val seeded = candidates.take(8)
+            if (seeded.isNotEmpty()) {
+                BookStore.saveHomeApps(service, seeded)
+                BookStore.markHomeAppsConfigured(service)
+                OperationLog.i(service, "BookHome", "seeded default home apps count=${seeded.size} (${launchable.size} launchable apps total)")
+            } else {
+                OperationLog.w(service, "BookHome", "no launchable default apps found (${launchable.size} launchable apps total); home_apps left unset")
+            }
+        } else {
+            OperationLog.i(service, "BookHome", "home apps already configured count=${BookStore.homeApps(service).size}")
         }
     }
 

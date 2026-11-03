@@ -197,6 +197,7 @@ internal object BookStore {
         // ~/Desktop items are not part of it.
         if (!packageName.startsWith(BookUi.LINUX_DESKTOP_PREFIX)) {
             saveHomeApps(context, homeApps(context).filter { it != packageName } + packageName)
+            markHomeAppsConfigured(context)
         }
     }
 
@@ -204,15 +205,39 @@ internal object BookStore {
         saveShortcuts(context, shortcuts(context).filter { it.packageName != packageName })
         if (!packageName.startsWith(BookUi.LINUX_DESKTOP_PREFIX)) {
             saveHomeApps(context, homeApps(context).filter { it != packageName })
+            markHomeAppsConfigured(context)
         }
     }
 
     // region home-screen app selection
 
     private const val HOME_APPS = "home_apps"
+    private const val HOME_APPS_SEEDED = "home_apps_seeded"
 
     /** True once the home-screen selection exists (first run seeds it). */
     fun hasHomeApps(context: Context) = prefs(context).contains(HOME_APPS)
+
+    /**
+     * True once the selection is deliberately set: either defaults were seeded,
+     * the user picked apps in settings, or they added/removed a desktop app. An
+     * empty stored list without this marker means seeding ran while app queries
+     * were broken and may be retried.
+     */
+    fun homeAppsConfigured(context: Context): Boolean {
+        val p = prefs(context)
+        return homeAppsConfigured(
+            p.getBoolean(HOME_APPS_SEEDED, false),
+            if (p.contains(HOME_APPS)) homeApps(context) else null,
+        )
+    }
+
+    /** Pure form of [homeAppsConfigured]: [stored] is null when the key is absent. */
+    fun homeAppsConfigured(seededMarker: Boolean, stored: List<String>?): Boolean =
+        seededMarker || (stored != null && stored.isNotEmpty())
+
+    /** Records that the selection was deliberately set (never re-seed after this). */
+    fun markHomeAppsConfigured(context: Context) =
+        prefs(context).edit().putBoolean(HOME_APPS_SEEDED, true).apply()
 
     /** The apps selected to show on the desktop home screen, in order. */
     fun homeApps(context: Context): List<String> =
@@ -236,6 +261,7 @@ internal object BookStore {
         val (_, removed) = homeAppsDiff(homeApps(context), next)
         removed.forEach { removeShortcut(context, it) }
         saveHomeApps(context, next)
+        markHomeAppsConfigured(context)
     }
 
     // endregion

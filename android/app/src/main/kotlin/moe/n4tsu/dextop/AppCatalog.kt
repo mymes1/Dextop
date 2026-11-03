@@ -12,43 +12,54 @@ import android.graphics.drawable.Drawable
 import java.io.ByteArrayOutputStream
 
 internal class AppCatalog(private val context: Context) {
-    fun launchableApps(includeIcons: Boolean = true): List<Map<String, Any>> {
-        val query = Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_LAUNCHER)
-        return queryLauncherActivities(query)
-            .asSequence()
-            .filter { it.activityInfo.packageName != context.packageName }
-            .distinctBy { it.activityInfo.packageName }
-            .map {
+    fun launchableApps(includeIcons: Boolean = true): List<Map<String, Any>> =
+        launcherEntries()
+            .map { (pkg, label, icon) ->
                 mutableMapOf<String, Any>(
-                    "label" to it.loadLabel(context.packageManager).toString(),
-                    "package" to it.activityInfo.packageName
+                    "label" to label,
+                    "package" to pkg
                 ).apply {
-                    if (includeIcons) put("icon", iconBytes(it.loadIcon(context.packageManager)))
+                    if (includeIcons) put("icon", iconBytes(icon))
                 }
             }
             .sortedBy { (it["label"] as String).lowercase() }
             .toList()
-    }
 
-    fun launchableAppIcons(): Map<String, ByteArray> {
-        val query = Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_LAUNCHER)
-        return queryLauncherActivities(query)
-            .asSequence()
-            .filter { it.activityInfo.packageName != context.packageName }
-            .distinctBy { it.activityInfo.packageName }
-            .associate { it.activityInfo.packageName to iconBytes(it.loadIcon(context.packageManager)) }
-    }
+    fun launchableAppIcons(): Map<String, ByteArray> =
+        launcherEntries().associate { (pkg, _, icon) -> pkg to iconBytes(icon) }
+
+    /** Packages of all launchable apps (same robust query as [launchableApps]). */
+    fun launchablePackages(): Set<String> = launcherEntries().map { it.first }.toSet()
 
     /**
-     * Launcher activities. Some vendor firmware (Samsung One UI without DeX,
-     * e.g. SM-X110) filters the MATCH_ALL query down to nothing, so fall back
-     * to the plain query and never return an empty catalog.
+     * Every launchable app as (package, label, icon). MATCH_ALL disables result
+     * filtering; some vendor firmware (Samsung One UI without DeX, e.g. SM-X110)
+     * throws on it or returns nothing, so fall back to the plain query and
+     * finally to enumerating installed applications via their launch intents.
+     * Never throws and never returns an empty catalog while apps are installed.
      */
-    private fun queryLauncherActivities(query: Intent): List<android.content.pm.ResolveInfo> {
+    private fun launcherEntries(): List<Triple<String, String, Drawable>> = runCatching {
         val manager = context.packageManager
-        return manager.queryIntentActivities(query, PackageManager.MATCH_ALL)
-            .ifEmpty { manager.queryIntentActivities(query, 0) }
-    }
+        val query = Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_LAUNCHER)
+        val resolved = runCatching { manager.queryIntentActivities(query, PackageManager.MATCH_ALL) }.getOrNull()
+            ?.ifEmpty { runCatching { manager.queryIntentActivities(query, 0) }.getOrNull().orEmpty() }
+            .orEmpty()
+            .filter { it.activityInfo.packageName != context.packageName }
+            .distinctBy { it.activityInfo.packageName }
+        if (resolved.isNotEmpty()) {
+            return@runCatching resolved.map {
+                Triple(it.activityInfo.packageName, it.loadLabel(manager).toString(), it.loadIcon(manager))
+            }
+        }
+        runCatching { manager.getInstalledApplications(0) }.getOrNull().orEmpty()
+            .filter { it.packageName != context.packageName }
+            .mapNotNull { info ->
+                runCatching { manager.getLaunchIntentForPackage(info.packageName) }.getOrNull()?.let {
+                    Triple(info.packageName, manager.getApplicationLabel(info).toString(), manager.getApplicationIcon(info))
+                }
+            }
+            .distinctBy { it.first }
+    }.getOrDefault(emptyList())
 
     private fun iconBytes(drawable: Drawable): ByteArray {
         val size = (64 * context.resources.displayMetrics.density).toInt().coerceAtLeast(64)
