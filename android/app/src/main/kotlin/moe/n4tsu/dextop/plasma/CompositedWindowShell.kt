@@ -369,7 +369,7 @@ internal abstract class CompositedWindowShell(
         if (state == null || saved == null) { autoRestorePending = false; return }
         val entries = (0 until saved.length()).mapNotNull { saved.optJSONObject(it) }
             .map { Triple(it.optString("package"), it.optInt("task", -1), it.optInt("pane", -1)) }
-            .filter { it.first.isNotEmpty() && service.packageManager.getLaunchIntentForPackage(it.first) != null }
+            .filter { it.first.isNotEmpty() && runCatching { service.packageManager.getLaunchIntentForPackage(it.first) != null }.getOrDefault(false) }
         if (entries.isEmpty()) { autoRestorePending = false; return }
         wmExecutor.execute {
             val manager = service.getSystemService(DisplayManager::class.java)
