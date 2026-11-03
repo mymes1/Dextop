@@ -14,7 +14,7 @@ import java.io.ByteArrayOutputStream
 internal class AppCatalog(private val context: Context) {
     fun launchableApps(includeIcons: Boolean = true): List<Map<String, Any>> {
         val query = Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_LAUNCHER)
-        return context.packageManager.queryIntentActivities(query, PackageManager.MATCH_ALL)
+        return queryLauncherActivities(query)
             .asSequence()
             .filter { it.activityInfo.packageName != context.packageName }
             .distinctBy { it.activityInfo.packageName }
@@ -32,11 +32,22 @@ internal class AppCatalog(private val context: Context) {
 
     fun launchableAppIcons(): Map<String, ByteArray> {
         val query = Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_LAUNCHER)
-        return context.packageManager.queryIntentActivities(query, PackageManager.MATCH_ALL)
+        return queryLauncherActivities(query)
             .asSequence()
             .filter { it.activityInfo.packageName != context.packageName }
             .distinctBy { it.activityInfo.packageName }
             .associate { it.activityInfo.packageName to iconBytes(it.loadIcon(context.packageManager)) }
+    }
+
+    /**
+     * Launcher activities. Some vendor firmware (Samsung One UI without DeX,
+     * e.g. SM-X110) filters the MATCH_ALL query down to nothing, so fall back
+     * to the plain query and never return an empty catalog.
+     */
+    private fun queryLauncherActivities(query: Intent): List<android.content.pm.ResolveInfo> {
+        val manager = context.packageManager
+        return manager.queryIntentActivities(query, PackageManager.MATCH_ALL)
+            .ifEmpty { manager.queryIntentActivities(query, 0) }
     }
 
     private fun iconBytes(drawable: Drawable): ByteArray {

@@ -443,6 +443,15 @@ open class MainActivity : FlutterActivity() {
                     val icons = AppCatalog(this).launchableAppIcons()
                     runOnUiThread { result.success(icons) }
                 }.start()
+                // The apps shown on Dextop Book's desktop home screen.
+                "homeScreenApps" -> result.success(moe.n4tsu.dextop.plasma.BookStore.homeApps(this))
+                "setHomeScreenApps" -> {
+                    val packages = call.argument<List<dynamic>>("packages")
+                        ?.filterIsInstance<String>() ?: emptyList()
+                    moe.n4tsu.dextop.plasma.BookStore.setHomeApps(this, packages)
+                    MirrorService.syncBookHomeApps()
+                    result.success(moe.n4tsu.dextop.plasma.BookStore.homeApps(this))
+                }
                 "launchApp" -> launchApp(call.arguments as? Map<*, *>, result)
                 "launchAutoWorkspace" -> {
                     val id = call.argument<String>("id").orEmpty()

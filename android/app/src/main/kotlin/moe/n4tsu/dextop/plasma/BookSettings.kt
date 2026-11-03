@@ -150,6 +150,7 @@ internal class BookSettingsContent(
         "statusbar" to tr("ライブ アクティビティ", "Live activity"), "statusbar" to tr("通知アイコン", "Notification icons"),
         "statusbar" to tr("電池残量（%）", "Battery percentage"),
         "desktop" to tr("デスクトップ アイコン", "Desktop icons"), "desktop" to tr("ショートカット", "Shortcuts"),
+        "desktop" to tr("アプリを追加", "Add apps"), "desktop" to tr("ホーム画面のアプリ", "Home screen apps"),
         "widgets" to tr("ウィジェットを追加", "Add widgets"),
         "windows" to tr("ホットコーナー", "Hot corner"), "windows" to tr("仮想デスクトップ", "Virtual desktops"),
         "windows" to tr("アニメーション", "Animations"), "about" to tr("バージョン", "Version"),
@@ -321,11 +322,20 @@ internal class BookSettingsContent(
     @Composable
     private fun DesktopPage() {
         val apps = host.apps().associateBy { it.packageName }
+        var picking by remember { mutableStateOf(false) }
+        var appQuery by remember { mutableStateOf("") }
+        if (picking) {
+            HomeAppsPicker(appQuery, { appQuery = it }) { picking = false }
+            return
+        }
         BookGroup(null, listOf(
             { shape -> BookSwitchItem(tr("デスクトップ アイコンを表示", "Show desktop icons"), BookStore.flag(context, BookStore.DESKTOP_ICONS, true),
                 { BookStore.setFlag(context, BookStore.DESKTOP_ICONS, it); tick++ }, shape,
-                summary = tr("ランチャーからアプリをデスクトップへドラッグすると追加できます", "Drag apps from the launcher onto the desktop to add them"),
+                summary = tr("ランチャーからアプリをデスクトップへドラッグするか、「アプリを追加」で選べます", "Drag apps from the launcher onto the desktop, or pick them under Add apps"),
                 symbol = "grid_view") },
+            { shape -> BookListItem(tr("アプリを追加", "Add apps"),
+                tr("ホーム画面に表示するアプリを選びます", "Choose the apps shown on the home screen"),
+                "add_circle", shape, onClick = { picking = true }) },
         ))
         val shortcuts = BookStore.shortcuts(context)
         Section(tr("ショートカット", "Shortcuts"))
@@ -337,6 +347,36 @@ internal class BookSettingsContent(
                     BookIconButton("delete", { BookStore.removeShortcut(context, shortcut.packageName); tick++ })
                 }
             }
+        })
+    }
+
+    /** Multi-select of the apps shown on the desktop home screen. */
+    @Composable
+    private fun HomeAppsPicker(query: String, onQuery: (String) -> Unit, onClose: () -> Unit) {
+        @Suppress("UNUSED_EXPRESSION") tick
+        val selected = BookStore.homeApps(context).toSet()
+        val needle = query.trim().lowercase()
+        val all = host.apps()
+            .filter { !it.packageName.startsWith(BookUi.LINUX_DESKTOP_PREFIX) }
+            .sortedBy { it.label.lowercase() }
+        val shown = if (needle.isEmpty()) all else all.filter {
+            it.label.lowercase().contains(needle) || it.packageName.lowercase().contains(needle)
+        }
+        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp),
+            modifier = Modifier.padding(bottom = 16.dp)) {
+            SearchPill(query, onQuery, tr("アプリを検索", "Search apps"), modifier = Modifier.weight(1f))
+            Text(tr("完了", "Done"), style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.primary,
+                modifier = Modifier.clip(CircleShape).clickable(onClick = onClose).padding(horizontal = 16.dp, vertical = 10.dp))
+        }
+        Section(tr("ホーム画面のアプリ", "Home screen apps"))
+        if (shown.isEmpty()) Text(tr("一致するアプリはありません", "No matching apps"),
+            style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(start = 16.dp))
+        else BookGroup(null, shown.map { app ->
+            val on = app.packageName in selected
+            row { shape -> BookSwitchItem(app.label, on, { value ->
+                if (value) host.addDesktopApp(app.packageName) else BookStore.removeShortcut(context, app.packageName)
+                tick++
+            }, shape, summary = app.packageName) }
         })
     }
 

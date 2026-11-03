@@ -391,6 +391,21 @@ class NativeBridge {
       {};
   Future<List<dynamic>> apps() async =>
       await channel.invokeListMethod<dynamic>('apps') ?? [];
+
+  /// App metadata (label + package) without icons.
+  Future<List<dynamic>> appsMetadata() async =>
+      await channel.invokeListMethod<dynamic>('appsMetadata') ?? [];
+
+  /// Packages currently shown on the Dextop Book desktop home screen.
+  Future<List<String>> homeScreenApps() async =>
+      await channel.invokeListMethod<String>('homeScreenApps') ?? [];
+
+  /// Replaces the home-screen app selection; returns the stored selection.
+  Future<List<String>> setHomeScreenApps(List<String> packages) async =>
+      await channel.invokeListMethod<String>('setHomeScreenApps', {
+        'packages': packages,
+      }) ??
+      packages;
   Future<bool> consumeTileAction() async =>
       await channel.invokeMethod<bool>('consumeTileAction') ?? false;
 

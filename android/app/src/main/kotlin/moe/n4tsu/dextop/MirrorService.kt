@@ -592,6 +592,14 @@ class MirrorService : AccessibilityService(), SurfaceHolder.Callback {
             Handler(Looper.getMainLooper()).post { service.plasmaShell?.reloadSettings() }
         }
 
+        /** Lets a running Book desktop place home-screen apps selected in the phone app. */
+        fun syncBookHomeApps() {
+            val service = instance ?: return
+            Handler(Looper.getMainLooper()).post {
+                (service.plasmaShell as? moe.n4tsu.dextop.plasma.BookShell)?.syncHomeApps()
+            }
+        }
+
         fun activeWindowManager(): String =
             when (instance?.plasmaShell) {
                 is moe.n4tsu.dextop.plasma.PlasmaV2Shell -> moe.n4tsu.dextop.plasma.WindowManagerSelection.DEXTOP_PLASMA_V2

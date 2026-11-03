@@ -63,6 +63,21 @@ extension _SettingsContent on _HomeScreenState {
                 ),
                 Divider(height: 1),
                 _categoryTile(
+                  Icons.add_to_home_screen_outlined,
+                  localText(context, 'ホーム画面のアプリ', 'Home screen apps'),
+                  localText(
+                    context,
+                    'Dextop Book のホーム画面に表示するアプリを選びます',
+                    'Choose which apps appear on the Dextop Book home screen',
+                  ),
+                  () => Navigator.of(context).push(
+                    MaterialPageRoute<void>(
+                      builder: (_) => HomeScreenAppsPage(bridge: bridge),
+                    ),
+                  ),
+                ),
+                Divider(height: 1),
+                _categoryTile(
                   Icons.gesture_rounded,
                   currentLocalizations().uiInputAndGestures,
                   currentLocalizations().uiTapPressAndHoldMultiFingerOperation,
@@ -362,6 +377,26 @@ extension _SettingsContent on _HomeScreenState {
         'apps' => ListView(
           padding: const EdgeInsets.all(20),
           children: [
+            ListTile(
+              leading: const Icon(Icons.add_to_home_screen_outlined),
+              title: Text(
+                localText(context, 'ホーム画面のアプリ', 'Home screen apps'),
+              ),
+              subtitle: Text(
+                localText(
+                  context,
+                  'Dextop Book のホーム画面に表示するアプリを選びます',
+                  'Choose which apps appear on the Dextop Book home screen',
+                ),
+              ),
+              trailing: const Icon(Icons.chevron_right_rounded),
+              onTap: () => Navigator.of(context).push(
+                MaterialPageRoute<void>(
+                  builder: (_) => HomeScreenAppsPage(bridge: bridge),
+                ),
+              ),
+            ),
+            const Divider(height: 1),
             DextopFeaturesPage(
               isRunning: active,
               embedded: true,

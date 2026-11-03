@@ -320,6 +320,9 @@ internal class BookUi(
                 view.layoutParams = params
             }
         }
+        // The grid is measurable now: place any home-screen apps selected in
+        // settings that do not have a cell yet.
+        syncHomeApps()
     }
 
     fun destroy() {
@@ -339,6 +342,8 @@ internal class BookUi(
         dockCovered = chrome.dockCovered()
         BookLive.battery = tray.battery
         BookLive.charging = tray.charging
+        // Place home-screen apps selected in settings once the area is known.
+        syncHomeApps()
     }
 
     fun recolor() {
@@ -366,6 +371,7 @@ internal class BookUi(
         // The experimental desktop folder was switched on or off.
         val folder = BookStore.flag(context, BookStore.LINUX_DESKTOP_FOLDER, false)
         if (folder != linuxFolderOn) { linuxFolderOn = folder; refreshLinuxDesktop() }
+        syncHomeApps()
     }
 
     /** The compositor re-lays its maximized windows when the taskbar starts or stops hiding. */
@@ -971,6 +977,46 @@ internal class BookUi(
         BookStore.placeShortcut(context, packageName, spot)
     }
 
+    /** Adds an app to the desktop home screen (from Book's settings or the phone app). */
+    fun addHomeApp(packageName: String) = addShortcut(packageName, null)
+
+    private fun isInstalled(packageName: String) =
+        runCatching { context.packageManager.getApplicationInfo(packageName, 0) }.isSuccess
+
+    /**
+     * Keeps the desktop grid in step with the home-screen selection
+     * ([BookStore.homeApps]): selected apps that have no cell get the nearest
+     * free one, and shortcuts of deselected or uninstalled apps are removed.
+     * Needs a laid-out [area]; called from [place] and the store listener.
+     */
+    fun syncHomeApps() {
+        if (area.width() <= 1 || area.height() <= 1) return
+        val home = BookStore.homeApps(context)
+        val current = BookStore.shortcuts(context)
+        // Deselected or uninstalled apps leave the home screen.
+        current
+            .filter {
+                !it.packageName.startsWith(LINUX_DESKTOP_PREFIX) &&
+                    (it.packageName !in home || !isInstalled(it.packageName))
+            }
+            .forEach { BookStore.removeShortcut(context, it.packageName) }
+        // Newly selected apps take the nearest free cell.
+        val placed = BookStore.shortcuts(context).map { it.packageName }.toSet()
+        home.filter { it !in placed && isInstalled(it) }.forEach { addShortcut(it, null) }
+    }
+
+    /** The app for a desktop shortcut even before the launcher's list has loaded. */
+    private fun packageApp(packageName: String): PlasmaApp? = runCatching {
+        val manager = context.packageManager
+        val info = manager.getApplicationInfo(packageName, 0)
+        PlasmaApp(
+            packageName,
+            manager.getApplicationLabel(info).toString(),
+            manager.getApplicationIcon(info),
+            info.category,
+        )
+    }.getOrNull()
+
     /** Binds [info] and puts it at [at] (or the first free spot); opens its configuration when it needs one. */
     fun addWidget(info: AppWidgetProviderInfo, at: GridSpot?) {
         val (columns, rows) = spanOf(info)
@@ -1008,8 +1054,16 @@ internal class BookUi(
             })
             widgets.forEach { widget -> androidx.compose.runtime.key("w${widget.appWidgetId}") { DesktopWidgetItem(widget) } }
             if (desktopIcons) shortcuts.forEach { shortcut ->
-                val app = apps[shortcut.packageName] ?: return@forEach
-                androidx.compose.runtime.key("s${shortcut.packageName}") { DesktopIcon(app, shortcut) }
+                // Fall back to PackageManager so an icon still shows while the
+                // launcher's app list is loading (or if a vendor query filters it out).
+                val app = apps[shortcut.packageName] ?: packageApp(shortcut.packageName) ?: return@forEach
+                val clamped = shortcut.spot.let { spot ->
+                    spot.copy(
+                        column = spot.column.coerceIn(0, gridColumns() - 1),
+                        row = spot.row.coerceIn(0, gridRows() - 1),
+                    )
+                }
+                androidx.compose.runtime.key("s${shortcut.packageName}") { DesktopIcon(app, shortcut.copy(spot = clamped)) }
             }
         }
     }

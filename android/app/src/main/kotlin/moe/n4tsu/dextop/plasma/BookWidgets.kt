@@ -46,6 +46,8 @@ internal interface BookHost {
     fun background(work: () -> Unit)
     fun openBookSettings(page: String? = null)
     fun openWidgetGallery()
+    /** Adds an app to the desktop home screen at the nearest free grid cell. */
+    fun addDesktopApp(packageName: String)
     fun openSystemSettings(intent: Intent)
     fun closePanel()
     fun launch(packageName: String)
@@ -70,6 +72,19 @@ internal data class GridSpot(val column: Int, val row: Int, val columns: Int = 1
 
 /** A shortcut on the desktop. */
 internal data class DesktopShortcut(val packageName: String, val spot: GridSpot)
+
+/**
+ * First-run candidates for the desktop home screen (browser, files, settings,
+ * store, …), shared with the compositor's default seeding. Only packages that
+ * are actually installed are kept.
+ */
+internal val bookDefaultHomeApps = listOf(
+    "com.android.chrome", "org.mozilla.firefox", "com.sec.android.app.sbrowser",
+    "com.google.android.apps.nbu.files", "com.sec.android.app.myfiles", "com.google.android.documentsui",
+    "com.android.settings", "com.android.vending", "com.google.android.youtube",
+    "com.google.android.gm", "com.google.android.calendar", "com.sec.android.app.popupcalculator",
+    "com.google.android.calculator", "com.google.android.apps.photos", "com.sec.android.gallery3d",
+)
 
 /** An Android app widget on the desktop. */
 internal data class DesktopWidget(val appWidgetId: Int, val spot: GridSpot)
@@ -176,11 +191,54 @@ internal object BookStore {
         }
     }
 
-    fun placeShortcut(context: Context, packageName: String, spot: GridSpot) =
+    fun placeShortcut(context: Context, packageName: String, spot: GridSpot) {
         saveShortcuts(context, shortcuts(context).filter { it.packageName != packageName } + DesktopShortcut(packageName, spot))
+        // Android apps on the desktop are the home-screen selection; Linux
+        // ~/Desktop items are not part of it.
+        if (!packageName.startsWith(BookUi.LINUX_DESKTOP_PREFIX)) {
+            saveHomeApps(context, homeApps(context).filter { it != packageName } + packageName)
+        }
+    }
 
-    fun removeShortcut(context: Context, packageName: String) =
+    fun removeShortcut(context: Context, packageName: String) {
         saveShortcuts(context, shortcuts(context).filter { it.packageName != packageName })
+        if (!packageName.startsWith(BookUi.LINUX_DESKTOP_PREFIX)) {
+            saveHomeApps(context, homeApps(context).filter { it != packageName })
+        }
+    }
+
+    // region home-screen app selection
+
+    private const val HOME_APPS = "home_apps"
+
+    /** True once the home-screen selection exists (first run seeds it). */
+    fun hasHomeApps(context: Context) = prefs(context).contains(HOME_APPS)
+
+    /** The apps selected to show on the desktop home screen, in order. */
+    fun homeApps(context: Context): List<String> =
+        prefs(context).getString(HOME_APPS, "").orEmpty().split(';').filter { it.isNotBlank() }
+
+    fun saveHomeApps(context: Context, list: List<String>) = prefs(context).edit()
+        .putString(HOME_APPS, list.distinct().filter { it.isNotBlank() }.joinToString(";")).apply()
+
+    /** (added, removed) when [next] replaces [current]. */
+    fun homeAppsDiff(current: List<String>, next: List<String>): Pair<List<String>, List<String>> =
+        (next - current) to (current - next)
+
+    /**
+     * Replaces the home-screen selection (from the phone app's settings): apps
+     * that are no longer selected lose their desktop shortcut, the new list is
+     * recorded, and a running Book desktop places added apps through its
+     * preference listener.
+     */
+    fun setHomeApps(context: Context, packages: List<String>) {
+        val next = packages.distinct().filter { it.isNotBlank() }
+        val (_, removed) = homeAppsDiff(homeApps(context), next)
+        removed.forEach { removeShortcut(context, it) }
+        saveHomeApps(context, next)
+    }
+
+    // endregion
 
     fun placeWidget(context: Context, appWidgetId: Int, spot: GridSpot) =
         saveWidgets(context, widgets(context).filter { it.appWidgetId != appWidgetId } + DesktopWidget(appWidgetId, spot))

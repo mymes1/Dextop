@@ -825,21 +825,24 @@ internal abstract class CompositedWindowShell(
     }
 
     private fun ensureDefaults() {
-        if (prefs.contains("favorites")) return
-        val candidates = listOf(
-            "com.android.chrome", "org.mozilla.firefox", "com.sec.android.app.sbrowser",
-            "com.google.android.apps.nbu.files", "com.sec.android.app.myfiles", "com.google.android.documentsui",
-            "com.android.settings", "com.android.vending", "com.google.android.youtube",
-            "com.google.android.gm", "com.google.android.calendar", "com.sec.android.app.popupcalculator",
-            "com.google.android.calculator", "com.google.android.apps.photos", "com.sec.android.gallery3d",
-        ).filter { runCatching { service.packageManager.getLaunchIntentForPackage(it) != null }.getOrDefault(false) }
-        prefs.edit()
-            .putString("favorites", candidates.take(12).joinToString(","))
-            .putString("pinned", candidates.filter {
-                it in setOf("com.android.settings", "com.android.vending", "com.android.chrome", "org.mozilla.firefox",
-                    "com.sec.android.app.sbrowser", "com.sec.android.app.myfiles", "com.google.android.apps.nbu.files")
-            }.take(4).joinToString(","))
-            .apply()
+        val candidates = bookDefaultHomeApps
+            .filter { runCatching { service.packageManager.getLaunchIntentForPackage(it) != null }.getOrDefault(false) }
+        if (!prefs.contains("favorites")) {
+            prefs.edit()
+                .putString("favorites", candidates.take(12).joinToString(","))
+                .putString("pinned", candidates.filter {
+                    it in setOf("com.android.settings", "com.android.vending", "com.android.chrome", "org.mozilla.firefox",
+                        "com.sec.android.app.sbrowser", "com.sec.android.app.myfiles", "com.google.android.apps.nbu.files")
+                }.take(4).joinToString(","))
+                .apply()
+        }
+        // First run: put the usual apps on Book's desktop home screen so it is
+        // never empty when a session starts (non-DeX devices like the SM-X110
+        // start straight into Book). BookUi places them on the grid once the
+        // display area is known.
+        if (!BookStore.hasHomeApps(service)) {
+            BookStore.saveHomeApps(service, candidates.take(8))
+        }
     }
 
     @SuppressLint("ClickableViewAccessibility")
@@ -4194,6 +4197,16 @@ internal abstract class CompositedWindowShell(
     override fun openWidgetGallery() {
         dismissPopup()
         bookUi?.openWindow("widgets")
+    }
+
+    /** Book: adds an app to the desktop home screen at the nearest free grid cell. */
+    override fun addDesktopApp(packageName: String) {
+        if (book) bookUi?.addHomeApp(packageName)
+    }
+
+    /** Book: re-reads the home-screen selection and places newly added apps on the grid. */
+    fun syncHomeApps() {
+        if (book) bookUi?.syncHomeApps()
     }
 
     /** Book: the snap layouts under the maximize button. */

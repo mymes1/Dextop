@@ -34,6 +34,7 @@ part 'home_screen.dart';
 part 'home_content.dart';
 part 'resolution_ui.dart';
 part 'settings_screen.dart';
+part 'home_screen_apps_page.dart';
 part 'display_topology.dart';
 part 'device_report.dart';
 part 'keyboard_themes.dart';

@@ -4,17 +4,29 @@
 
 ### 日本語
 
+#### 新機能
+
+- 設定に「ホーム画面のアプリ」を追加しました。Dextop Book のデスクトップ（ホーム画面）に表示するアプリをアプリ一覧から選んで追加・削除できます。Dextop Book の設定ウィンドウの「デスクトップ」ページにも同じアプリ選択を追加しました。
+
 #### 修正
 
 - Samsung製でDeX非対応の端末（Galaxy Tab A9 / SM-X110 など）で、仮想デスクトップ上のアプリが全画面表示になってしまう問題を修正しました。端末のウィンドウスタックを判定してプロファイルを選択し、Android 15 でも利用できる `IWindowManager#setWindowingMode` で仮想ディスプレイをフリーフォームに切り替え、`ActivityOptions` でフリーフォーム起動を要求し、起動後のタスクのモードと境界を検証します。詳細は `docs/freeform-windowing.md` を参照してください。
 - `wm set-display-windowing-mode` は Android 16 以降にのみ存在するため、API 35 では実行しないようにしました。
+- Dextop Book を初めて起動したときホーム画面にアプリが1つも表示されなかった問題を修正しました。初回起動時に定番アプリ（ブラウザ、ファイル、設定など）をホーム画面へ自動で配置します。また、ランチャーのアプリ一覧がまだ読み込まれていない場合でも、デスクトップのアイコンが PackageManager から取得した情報で表示されるようにしました。
+- 一部の端末（DeX非対応の Samsung One UI など）で `MATCH_ALL` 付きのアプリ一覧クエリが空を返す場合に、通常のクエリへフォールバックするようにしました。
 
 ### English
+
+#### Features
+
+- Added "Home screen apps" to Settings: pick which apps appear on the Dextop Book desktop (home screen) from the full app list. The same picker was added to Dextop Book's own Settings window under "Desktop".
 
 #### Fixes
 
 - Fixed applications opening fullscreen in Dextop's virtual desktop on Samsung devices without DeX (Galaxy Tab A9 / SM-X110 and similar). The profile is now chosen from the firmware's actual window stack, the virtual display is switched to freeform through `IWindowManager#setWindowingMode` (which exists on Android 15), launches request a freeform window through `ActivityOptions`, and the resulting task's mode and bounds are verified. See `docs/freeform-windowing.md`.
 - `wm set-display-windowing-mode` only exists on Android 16 and later and is no longer attempted on API 35.
+- Fixed the Dextop Book home screen showing no apps on first start: the usual apps (browser, files, settings, …) are now placed on the desktop automatically, and desktop icons fall back to PackageManager data while the launcher's app list is still loading.
+- On some devices (Samsung One UI without DeX), the launcher query with `MATCH_ALL` can return nothing; it now falls back to the plain query so the app list is never empty.
 
 ## 1.7.0
 

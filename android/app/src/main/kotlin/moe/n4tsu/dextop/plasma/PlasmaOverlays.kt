@@ -223,7 +223,13 @@ internal class PlasmaAppRepository(private val context: Context) {
         executor.execute {
             val manager = context.packageManager
             val query = Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_LAUNCHER)
-            val loaded = manager.queryIntentActivities(query, PackageManager.MATCH_ALL)
+            // Some vendor firmware (seen on Samsung One UI without DeX, e.g.
+            // SM-X110) filters the MATCH_ALL query down to nothing; fall back to
+            // the plain query so the launcher and the desktop home screen are
+            // never empty.
+            val resolved = manager.queryIntentActivities(query, PackageManager.MATCH_ALL)
+                .ifEmpty { manager.queryIntentActivities(query, 0) }
+            val loaded = resolved
                 .asSequence()
                 .distinctBy { it.activityInfo.packageName }
                 .map {
