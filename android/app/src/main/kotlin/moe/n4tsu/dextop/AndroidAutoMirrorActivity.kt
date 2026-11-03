@@ -514,7 +514,7 @@ class AndroidAutoMirrorActivity : Activity(), SurfaceHolder.Callback {
 internal class AutoDisplaySession(private val activity: Context) {
     private val displayManager = activity.getSystemService(DisplayManager::class.java)
     private val privilegedAccess = PrivilegedAccess("DextopAndroidAutoSession")
-    private val environment = DesktopEnvironmentRegistry.current()
+    private val environment = DesktopEnvironmentRegistry.current(activity)
     private val backend = DisplayMirrorBackend(
         activity,
         activity.contentResolver,
@@ -1017,7 +1017,7 @@ internal class AndroidAutoMirrorController(
         context.contentResolver,
         displayManager,
         privilegedAccess,
-        DesktopEnvironmentRegistry.current()
+        DesktopEnvironmentRegistry.current(context)
     )
     private val inputDispatcher = InputDispatcher(privilegedAccess) { _, displayId, accepted, error ->
         if (!accepted) {

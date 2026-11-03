@@ -19,8 +19,9 @@ internal class DiagnosticReport(private val context: Context) {
     private fun line(name: String, value: Any?) = "$name: ${value ?: "unknown"}\n"
 
     fun build(): String {
-        val identity = DeviceIdentity.current()
+        val identity = DeviceIdentity.current(context)
         val environment = DesktopEnvironmentRegistry.resolve(identity)
+        val desktopStack = DesktopStackProbe.current(context)
         val diagnostics = DeviceDiagnostics(context).report()
         val activity = context.getSystemService(ActivityManager::class.java)
         val memory = ActivityManager.MemoryInfo().also(activity::getMemoryInfo)
@@ -71,6 +72,11 @@ internal class DiagnosticReport(private val context: Context) {
         sb.append(line("privilegeProvider", diagnostics["privilegeProviderName"]))
         sb.append(line("stellarInstalled", diagnostics["stellarInstalled"]))
         sb.append(line("shizukuInstalled", diagnostics["originalShizukuInstalled"]))
+        sb.append(line("desktopStack", desktopStack.report()))
+        sb.append(line("desktopStackOverride", DesktopStackProbe.override(context).name.lowercase()))
+        sb.append(line("platformDesktopAvailable", identity.platformDesktopAvailable))
+        sb.append(line("requiresFreeformDisplay", environment.requiresFreeformDisplay))
+        sb.append(line("freeformFallbackSettings", environment.freeformFallbackSettings.entries.joinToString { "${it.key}=${it.value}" }))
         sb.append(line("environmentId", environment.id))
         sb.append(line("environmentName", environment.displayName))
         sb.append(line("platformManaged", environment.platformManaged))
@@ -115,6 +121,43 @@ internal class DiagnosticReport(private val context: Context) {
         listOf("overlay_display_devices", "enable_freeform_support", "force_resizable_activities",
             "force_desktop_mode_on_external_displays", "adb_wifi_enabled").forEach {
             sb.append(line(it, Settings.Global.getString(context.contentResolver, it)))
+        }
+        sb.append("\n[FREEFORM WINDOWING]\n")
+        sb.append(line("windowManagerSelection",
+            runCatching {
+                context.getSharedPreferences("FlutterSharedPreferences", Context.MODE_PRIVATE)
+                    .getString("flutter.window_manager", null)
+            }.getOrNull() ?: "unset"))
+        sb.append(line("sessionWindowing", MirrorService.windowingDiagnostics().ifBlank { "(no session)" }))
+        val windowingProbe = PrivilegedAccess("DextopWindowingProbe")
+        val windowingBridge = DisplayWindowingBridge(
+            { name, interfaceName -> windowingProbe.service(name, interfaceName) },
+            "DextopWindowingProbe"
+        )
+        if (windowingProbe.isAvailable() && windowingBridge.isSupported()) {
+            displayManager.displays.forEach { display ->
+                sb.append(line(
+                    "displayWindowing.${display.displayId}",
+                    windowingBridge.readMode(display.displayId)?.dumpName ?: "unreadable"
+                ))
+            }
+            val taskBridge = moe.n4tsu.dextop.plasma.TaskBridge(
+                { name, interfaceName -> windowingProbe.service(name, interfaceName) },
+                "DextopWindowingProbe"
+            )
+            displayManager.displays.forEach { display ->
+                val tasks = runCatching { taskBridge.tasks(display.displayId) }.getOrNull().orEmpty()
+                if (tasks.isNotEmpty()) {
+                    sb.append(line(
+                        "tasks.${display.displayId}",
+                        tasks.joinToString(" ") {
+                            "${it.packageName}:${DisplayWindowing.fromFramework(it.windowingMode).dumpName}:${it.bounds.flattenToShortString()}"
+                        }
+                    ))
+                }
+            }
+        } else {
+            sb.append(line("privilegedWindowing", "unavailable"))
         }
         sb.append("\n[LAST COMPLETED DEXTOP SESSION]\n")
         sb.append(OperationLog.readLastSession(context).ifBlank { "(empty)\n" })

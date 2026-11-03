@@ -9,8 +9,12 @@ internal object DeviceProfiles {
         DesktopEnvironmentRule(
             "samsung_trifold",
             DeviceMatch(manufacturers = setOf("samsung"), devices = setOf("q7mq"), minSdk = 36)
-        ) {
-            DesktopEnvironmentRegistry.samsungDex(autoResizeWithHostDisplay = true)
+        ) { identity ->
+            if (identity.platformDesktopAvailable == false) {
+                DesktopEnvironmentRegistry.samsungWindowedDesktop(identity)
+            } else {
+                DesktopEnvironmentRegistry.samsungDex(autoResizeWithHostDisplay = true)
+            }
         },
         // Japanese carrier variants can expose a model identifier beginning
         // with SC, SCG, or SCV even when Build.MANUFACTURER is not reported as
@@ -20,11 +24,17 @@ internal object DeviceProfiles {
         DesktopEnvironmentRule(
             "samsung_carrier_model",
             DeviceMatch(modelPrefixes = setOf("scv", "scg", "sc"))
-        ) {
-            DesktopEnvironmentRegistry.samsungDex()
+        ) { identity ->
+            samsungDesktop(identity)
         },
-        DesktopEnvironmentRule("samsung_dex", DeviceMatch(manufacturers = setOf("samsung"))) {
-            DesktopEnvironmentRegistry.samsungDex()
+        // Samsung ships two window stacks behind the same manufacturer string:
+        // DeX firmware manages freeform itself, while firmware without DeX
+        // (Galaxy Tab A9 / SM-X110) leaves secondary displays in fullscreen
+        // until Dextop configures them. The rule therefore resolves on the
+        // probed capability, not on the brand, and covers every current and
+        // future Samsung model without a new device list.
+        DesktopEnvironmentRule("samsung_desktop", DeviceMatch(manufacturers = setOf("samsung"))) { identity ->
+            samsungDesktop(identity)
         },
         // Xperia Launcher starts SecondaryDisplayLauncher on the trusted
         // recording display, which pauses the mirror (verified on A401SO,
@@ -77,6 +87,14 @@ internal object DeviceProfiles {
         vendor("nothing_os", setOf("nothing"), "nativeNothingOsDesktop"),
         vendor("pixel_android", setOf("google"), "nativePixelAndroidDesktop")
     )
+
+    /** DeX when the firmware has it, Dextop's own freeform desktop when it does not. */
+    private fun samsungDesktop(identity: DeviceIdentity): DesktopEnvironment =
+        if (identity.platformDesktopAvailable == false) {
+            DesktopEnvironmentRegistry.samsungWindowedDesktop(identity)
+        } else {
+            DesktopEnvironmentRegistry.samsungDex()
+        }
 
     private fun vendor(id: String, manufacturers: Set<String>, stringKey: String) =
         DesktopEnvironmentRule(id, DeviceMatch(manufacturers = manufacturers)) { identity ->
