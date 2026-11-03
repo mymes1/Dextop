@@ -446,7 +446,7 @@ open class MainActivity : FlutterActivity() {
                 // The apps shown on Dextop Book's desktop home screen.
                 "homeScreenApps" -> result.success(moe.n4tsu.dextop.plasma.BookStore.homeApps(this))
                 "setHomeScreenApps" -> {
-                    val packages = call.argument<List<dynamic>>("packages")
+                    val packages = call.argument<List<*>>("packages")
                         ?.filterIsInstance<String>() ?: emptyList()
                     moe.n4tsu.dextop.plasma.BookStore.setHomeApps(this, packages)
                     MirrorService.syncBookHomeApps()
