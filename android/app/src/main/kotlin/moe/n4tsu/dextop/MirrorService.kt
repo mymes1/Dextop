@@ -641,8 +641,11 @@ class MirrorService : AccessibilityService(), SurfaceHolder.Callback {
 
         fun launchPackage(packageName: String, bounds: android.graphics.Rect? = null): Boolean =
             instance?.let { service ->
+                // Both the normal launch and the privileged fallback need the
+                // same fitted bounds, so keep them outside the runCatching lambda.
+                var fittedBounds: Rect? = null
                 runCatching {
-                    val fittedBounds = bounds?.let {
+                    fittedBounds = bounds?.let {
                         service.workspaceLayoutEngine.fit(
                             service.targetDisplayId,
                             service.targetWidth,
