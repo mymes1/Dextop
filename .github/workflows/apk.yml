@@ -1,0 +1,224 @@
+name: Build APK
+
+on:
+  workflow_dispatch:
+    inputs:
+      build_type:
+        description: "APK type (release requires the DEXTOP_* signing secrets)"
+        type: choice
+        options: [debug, release]
+        default: debug
+      abi:
+        description: "Target ABI (Galaxy Tab A9 / SM-X110 is arm64-v8a)"
+        type: choice
+        options: [arm64, all]
+        default: arm64
+      release_tag:
+        description: "Optional: publish the APK as a GitHub Release with this tag"
+        type: string
+        required: false
+        default: ""
+
+permissions:
+  contents: write
+
+concurrency:
+  group: build-apk-${{ inputs.build_type }}-${{ inputs.abi }}
+  cancel-in-progress: true
+
+env:
+  FLUTTER_VERSION: "3.47.7"
+  FLUTTER_CHANNEL: stable
+  JAVA_VERSION: "17"
+  COMPILE_SDK: "36"
+  BUILD_TOOLS: "36.0.0"
+  CMAKE_VERSION: "3.22.1"
+
+jobs:
+  build:
+    name: Build ${{ inputs.build_type }} APK (${{ inputs.abi }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      # ---------- toolchains ----------
+      - name: Set up Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: ${{ env.JAVA_VERSION }}
+          cache: gradle
+
+      - name: Set up Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          channel: ${{ env.FLUTTER_CHANNEL }}
+          flutter-version: ${{ env.FLUTTER_VERSION }}
+          cache: true
+
+      - name: Install host dependencies
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          # python3 runs tool/generate_native_strings.py from the Gradle build.
+          sudo apt-get install -y --no-install-recommends python3 unzip curl
+          python3 --version
+          java -version
+          flutter --version
+
+      # ---------- android sdk / ndk ----------
+      - name: Ensure sdkmanager exists
+        run: |
+          set -euo pipefail
+          SDK="${ANDROID_HOME:-${ANDROID_SDK_ROOT:-/usr/local/lib/android/sdk}}"
+          echo "ANDROID_HOME=$SDK" >> "$GITHUB_ENV"
+          echo "ANDROID_SDK_ROOT=$SDK" >> "$GITHUB_ENV"
+          if ! command -v sdkmanager >/dev/null 2>&1; then
+            sudo mkdir -p "$SDK/cmdline-tools"
+            curl -fsSL -o /tmp/cmdline-tools.zip \
+              https://dl.google.com/android/repository/commandlinetools-linux-11076708_latest.zip
+            sudo unzip -q /tmp/cmdline-tools.zip -d /tmp/cmdline-tools
+            sudo mv /tmp/cmdline-tools/cmdline-tools "$SDK/cmdline-tools/latest"
+          fi
+          echo "$SDK/cmdline-tools/latest/bin" >> "$GITHUB_PATH"
+          echo "$SDK/platform-tools" >> "$GITHUB_PATH"
+
+      - name: Accept Android licenses
+        run: |
+          set -eo pipefail
+          SDK="${ANDROID_HOME}"
+          yes | "$SDK/cmdline-tools/latest/bin/sdkmanager" --licenses > /dev/null || true
+
+      - name: Install Android SDK components
+        run: |
+          set -eo pipefail
+          SDKMANAGER="${ANDROID_HOME}/cmdline-tools/latest/bin/sdkmanager"
+          # compileSdk 36 is pinned by android/app and android/cardex.
+          # CMake is pinned by android/app/build.gradle.kts.
+          "$SDKMANAGER" --install \
+            "platform-tools" \
+            "platforms;android-${COMPILE_SDK}" \
+            "build-tools;${BUILD_TOOLS}" \
+            "cmake;${CMAKE_VERSION}" || {
+              echo "::warning::Some SDK packages could not be pre-installed; AGP will provision them."
+            }
+          # The NDK version comes from flutter.ndkVersion and is installed by AGP
+          # on the first build (licenses are accepted above).
+          "$SDKMANAGER" --list_installed | head -n 40
+
+      # ---------- project dependencies ----------
+      - name: Precache Flutter Android artifacts
+        run: flutter precache --android --no-web --no-linux --no-windows --no-macos
+
+      - name: Install Dart dependencies
+        run: flutter pub get
+
+      - name: Generate localizations
+        run: flutter gen-l10n
+
+      - name: Resolve build type
+        id: type
+        env:
+          REQUESTED: ${{ inputs.build_type }}
+          KEYSTORE_B64: ${{ secrets.DEXTOP_KEYSTORE_BASE64 }}
+        run: |
+          set -euo pipefail
+          if [ "$REQUESTED" = "release" ] && [ -z "$KEYSTORE_B64" ]; then
+            echo "::warning::No DEXTOP_KEYSTORE_BASE64 secret configured - building a debug APK instead."
+            echo "type=debug" >> "$GITHUB_OUTPUT"
+          else
+            echo "type=$REQUESTED" >> "$GITHUB_OUTPUT"
+          fi
+
+      # ---------- build ----------
+      - name: Build APK
+        env:
+          BUILD_TYPE: ${{ steps.type.outputs.type }}
+          ABI: ${{ inputs.abi }}
+          KEYSTORE_B64: ${{ secrets.DEXTOP_KEYSTORE_BASE64 }}
+          KEY_ALIAS: ${{ secrets.DEXTOP_KEY_ALIAS }}
+          STORE_PASSWORD: ${{ secrets.DEXTOP_STORE_PASSWORD }}
+          KEY_PASSWORD: ${{ secrets.DEXTOP_KEY_PASSWORD }}
+        run: |
+          set -euo pipefail
+          if [ "$BUILD_TYPE" = "release" ]; then
+            mkdir -p android/keystore
+            printf '%s' "$KEYSTORE_B64" | base64 -d > android/keystore/dextop-upload.jks
+            export DEXTOP_KEYSTORE_FILE=android/keystore/dextop-upload.jks
+            export DEXTOP_KEY_ALIAS="$KEY_ALIAS"
+            export DEXTOP_STORE_PASSWORD="$STORE_PASSWORD"
+            export DEXTOP_KEY_PASSWORD="$KEY_PASSWORD"
+          fi
+
+          PLATFORM_FLAG=""
+          if [ "$ABI" = "arm64" ]; then
+            PLATFORM_FLAG="--target-platform android-arm64"
+          fi
+
+          flutter build apk --flavor github --"$BUILD_TYPE" $PLATFORM_FLAG \
+            --dart-define=DISTRIBUTION_CHANNEL=github
+
+      # ---------- verify + package ----------
+      - name: Verify APK
+        env:
+          BUILD_TYPE: ${{ steps.type.outputs.type }}
+        run: |
+          set -euo pipefail
+          APK="build/app/outputs/flutter-apk/app-github-${BUILD_TYPE}.apk"
+          test -f "$APK"
+          ls -l "$APK"
+          AAPT=$(ls "$ANDROID_HOME"/build-tools/*/aapt2 2>/dev/null | sort -V | tail -n 1 || true)
+          if [ -n "$AAPT" ]; then
+            "$AAPT" dump badging "$APK" | grep -E "^package:|^sdkVersion|^targetSdkVersion|^native-code" || true
+          fi
+          unzip -l "$APK" | grep -E "lib/.*/lib(proot|dextop_linux)\.so" \
+            || echo "::warning::native helper libraries are missing from the APK"
+
+      - name: Package artifact
+        id: package
+        env:
+          BUILD_TYPE: ${{ steps.type.outputs.type }}
+          ABI: ${{ inputs.abi }}
+        run: |
+          set -euo pipefail
+          VERSION=$(awk '/^version:/ {print $2; exit}' pubspec.yaml)
+          VERSION_NAME=${VERSION%%+*}
+          SHORT_SHA=$(git rev-parse --short HEAD)
+          mkdir -p dist
+          NAME="Dextop-v${VERSION_NAME}-${BUILD_TYPE}-${ABI}-${SHORT_SHA}"
+          cp "build/app/outputs/flutter-apk/app-github-${BUILD_TYPE}.apk" "dist/${NAME}.apk"
+          {
+            echo "name=${NAME}"
+            echo "version=${VERSION}"
+            echo "build_type=${BUILD_TYPE}"
+            echo "abi=${ABI}"
+            echo "commit=${{ github.sha }}"
+            echo "flutter=$(flutter --version | head -n 1)"
+            echo "built=$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+          } > "dist/${NAME}.txt"
+          cat "dist/${NAME}.txt"
+          echo "name=${NAME}" >> "$GITHUB_OUTPUT"
+
+      - name: Upload APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ steps.package.outputs.name }}
+          path: dist/*
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: Publish GitHub Release
+        if: inputs.release_tag != ''
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ inputs.release_tag }}
+          name: Dextop ${{ inputs.release_tag }}
+          files: dist/*.apk
+          generate_release_notes: true
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
