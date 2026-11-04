@@ -14,6 +14,7 @@
 - `wm set-display-windowing-mode` は Android 16 以降にのみ存在するため、API 35 では実行しないようにしました。
 - Dextop Book を初めて起動したときホーム画面にアプリが1つも表示されなかった問題を修正しました。初回起動時に定番アプリ（ブラウザ、ファイル、設定など）をホーム画面へ自動で配置します。また、ランチャーのアプリ一覧がまだ読み込まれていない場合でも、デスクトップのアイコンが PackageManager から取得した情報で表示されるようにしました。
 - 一部の端末（DeX非対応の Samsung One UI など）で `MATCH_ALL` 付きのアプリ一覧クエリが空を返す場合に、通常のクエリへフォールバックするようにしました。
+- アプリ一覧の取得をさらに堅牢にしました。まず安全な通常クエリ（flags=0）を試し、空の場合のみ `MATCH_ALL`、最後にインストール済みアプリの列挙へと段階的にフォールバックします（Samsung One UI では `MATCH_ALL` クエリがハング・例外・空を返すことがあるため、起動経路では実行しません）。初回のホーム画面シードはバックグラウンドで行い（シェル起動をブロックしない）、空のまま保存された場合のみ再シードします。シード・配置・取得件数はオペレーションログに記録します。
 
 ### English
 
@@ -27,7 +28,7 @@
 - `wm set-display-windowing-mode` only exists on Android 16 and later and is no longer attempted on API 35.
 - Fixed the Dextop Book home screen showing no apps on first start: the usual apps (browser, files, settings, …) are now placed on the desktop automatically, and desktop icons fall back to PackageManager data while the launcher's app list is still loading.
 - On some devices (Samsung One UI without DeX), the launcher query with `MATCH_ALL` can return nothing; it now falls back to the plain query so the app list is never empty.
-- Made app-list loading robust end to end: if the `MATCH_ALL` query throws or comes back empty on a device, the code falls back to the plain query and finally to enumerating installed apps via their launch intents, so the launcher, the Book desktop, the phone home screen and the settings picker can never end up empty. Also fixed first-run seeding so an empty list saved while queries were broken no longer blocks re-seeding (only a deliberately empty or absent selection is re-seeded), and seeding/placement/query counts are now written to the operation log for on-device diagnosis.
+- Made app-list loading robust end to end: the universally safe plain query (flags=0) is tried first, then `MATCH_ALL` only if that comes back empty, and finally installed apps are enumerated via their launch intents — on Samsung One UI without DeX the `MATCH_ALL` query can hang, throw or return nothing, so it is never used on the startup path. The launcher, the Book desktop, the phone home screen and the settings picker all use this path and can never end up silently empty. First-run home-screen seeding now runs in the background (it can never block shell startup), an empty list saved while queries were broken no longer blocks re-seeding, and seeding/placement/query counts are written to the operation log for on-device diagnosis.
 
 ## 1.7.0
 

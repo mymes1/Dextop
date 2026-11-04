@@ -32,17 +32,19 @@ internal class AppCatalog(private val context: Context) {
     fun launchablePackages(): Set<String> = launcherEntries().map { it.first }.toSet()
 
     /**
-     * Every launchable app as (package, label, icon). MATCH_ALL disables result
-     * filtering; some vendor firmware (Samsung One UI without DeX, e.g. SM-X110)
-     * throws on it or returns nothing, so fall back to the plain query and
-     * finally to enumerating installed applications via their launch intents.
+     * Every launchable app as (package, label, icon). The plain query (flags=0)
+     * is tried first: it is universally supported and QUERY_ALL_PACKAGES already
+     * disables visibility filtering. Some vendor firmware (Samsung One UI
+     * without DeX, e.g. SM-X110) hangs, throws on or empties the MATCH_ALL
+     * query, so that is only tried when the plain query comes back empty, and
+     * finally installed applications are enumerated via their launch intents.
      * Never throws and never returns an empty catalog while apps are installed.
      */
     private fun launcherEntries(): List<Triple<String, String, Drawable>> = runCatching {
         val manager = context.packageManager
         val query = Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_LAUNCHER)
-        val resolved = runCatching { manager.queryIntentActivities(query, PackageManager.MATCH_ALL) }.getOrNull()
-            ?.ifEmpty { runCatching { manager.queryIntentActivities(query, 0) }.getOrNull().orEmpty() }
+        val resolved = runCatching { manager.queryIntentActivities(query, 0) }.getOrNull()
+            ?.ifEmpty { runCatching { manager.queryIntentActivities(query, PackageManager.MATCH_ALL) }.getOrNull().orEmpty() }
             .orEmpty()
             .filter { it.activityInfo.packageName != context.packageName }
             .distinctBy { it.activityInfo.packageName }

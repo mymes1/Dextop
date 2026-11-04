@@ -827,12 +827,10 @@ internal abstract class CompositedWindowShell(
     }
 
     private fun ensureDefaults() {
-        // Resolve launchable defaults through the robust catalog query: on some
-        // vendor firmware (Samsung One UI without DeX, e.g. SM-X110) the plain
-        // getLaunchIntentForPackage / intent-query calls come back empty or
-        // throw, which must not leave Book's home screen without apps.
-        val launchable = AppCatalog(service).launchablePackages()
-        val candidates = bookDefaultHomeApps.filter { it in launchable }
+        // Cheap per-package checks for the panel favorites; these calls are
+        // known to work on Samsung One UI and keep start() binder-light.
+        val candidates = bookDefaultHomeApps
+            .filter { runCatching { service.packageManager.getLaunchIntentForPackage(it) != null }.getOrDefault(false) }
         if (!prefs.contains("favorites")) {
             prefs.edit()
                 .putString("favorites", candidates.take(12).joinToString(","))
@@ -844,22 +842,39 @@ internal abstract class CompositedWindowShell(
         }
         // First run: put the usual apps on Book's desktop home screen so it is
         // never empty when a session starts (non-DeX devices like the SM-X110
-        // start straight into Book). BookUi places them on the grid once the
-        // display area is known. An empty stored list without the configured
-        // marker means an earlier seed ran while app queries were broken, so it
-        // is retried; never save an empty seed.
+        // start straight into Book). The launchable-app query runs in the
+        // BACKGROUND: on some vendor firmware (Samsung One UI without DeX) the
+        // MATCH_ALL intent query can hang or throw, and that must never block
+        // start()/buildRoot(). BookUi places the seeded apps on the grid through
+        // its store listener once the display area is known.
         if (!BookStore.homeAppsConfigured(service)) {
-            val seeded = candidates.take(8)
-            if (seeded.isNotEmpty()) {
-                BookStore.saveHomeApps(service, seeded)
-                BookStore.markHomeAppsConfigured(service)
-                OperationLog.i(service, "BookHome", "seeded default home apps count=${seeded.size} (${launchable.size} launchable apps total)")
-            } else {
-                OperationLog.w(service, "BookHome", "no launchable default apps found (${launchable.size} launchable apps total); home_apps left unset")
-            }
+            seedHomeAppsAsync()
         } else {
             OperationLog.i(service, "BookHome", "home apps already configured count=${BookStore.homeApps(service).size}")
         }
+    }
+
+    /**
+     * Resolves launchable defaults through the robust catalog query off the
+     * start path and seeds [BookStore.homeApps] with them. An empty stored
+     * list without the configured marker means an earlier seed ran while app
+     * queries were broken, so it is retried; never save an empty seed.
+     */
+    private fun seedHomeAppsAsync() {
+        Thread {
+            val launchable = AppCatalog(service).launchablePackages()
+            val seeded = bookDefaultHomeApps.filter { it in launchable }.take(8)
+            handler.post {
+                if (BookStore.homeAppsConfigured(service)) return@post
+                if (seeded.isNotEmpty()) {
+                    BookStore.saveHomeApps(service, seeded)
+                    BookStore.markHomeAppsConfigured(service)
+                    OperationLog.i(service, "BookHome", "seeded default home apps count=${seeded.size} (${launchable.size} launchable apps total)")
+                } else {
+                    OperationLog.w(service, "BookHome", "no launchable default apps found (${launchable.size} launchable apps total); home_apps left unset")
+                }
+            }
+        }.start()
     }
 
     @SuppressLint("ClickableViewAccessibility")
