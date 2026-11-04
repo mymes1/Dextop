@@ -34,17 +34,17 @@ internal class AppCatalog(private val context: Context) {
     /**
      * Every launchable app as (package, label, icon). The plain query (flags=0)
      * is tried first: it is universally supported and QUERY_ALL_PACKAGES already
-     * disables visibility filtering. Some vendor firmware (Samsung One UI
-     * without DeX, e.g. SM-X110) hangs, throws on or empties the MATCH_ALL
-     * query, so that is only tried when the plain query comes back empty, and
-     * finally installed applications are enumerated via their launch intents.
-     * Never throws and never returns an empty catalog while apps are installed.
+     * disables visibility filtering. On some vendor firmware (Samsung One UI
+     * without DeX, e.g. SM-X110) the plain query comes back empty in some
+     * processes and the MATCH_ALL query HANGS for tens of seconds, so the
+     * reliable installed-applications enumeration runs next and MATCH_ALL is
+     * only a last resort. Never throws and never returns an empty catalog while
+     * apps are installed.
      */
     private fun launcherEntries(): List<Triple<String, String, Drawable>> = runCatching {
         val manager = context.packageManager
         val query = Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_LAUNCHER)
         val resolved = runCatching { manager.queryIntentActivities(query, 0) }.getOrNull()
-            ?.ifEmpty { runCatching { manager.queryIntentActivities(query, PackageManager.MATCH_ALL) }.getOrNull().orEmpty() }
             .orEmpty()
             .filter { it.activityInfo.packageName != context.packageName }
             .distinctBy { it.activityInfo.packageName }
@@ -56,7 +56,7 @@ internal class AppCatalog(private val context: Context) {
                 }.getOrNull()
             }
         }
-        runCatching { manager.getInstalledApplications(0) }.getOrNull().orEmpty()
+        val enumerated = runCatching { manager.getInstalledApplications(0) }.getOrNull().orEmpty()
             .filter { it.packageName != context.packageName }
             .mapNotNull { info ->
                 runCatching {
@@ -68,6 +68,17 @@ internal class AppCatalog(private val context: Context) {
                 }.getOrNull()
             }
             .distinctBy { it.first }
+        if (enumerated.isNotEmpty()) return@runCatching enumerated
+        // Last resort only: on Samsung One UI without DeX this call can hang.
+        runCatching { manager.queryIntentActivities(query, PackageManager.MATCH_ALL) }.getOrNull()
+            .orEmpty()
+            .filter { it.activityInfo.packageName != context.packageName }
+            .distinctBy { it.activityInfo.packageName }
+            .mapNotNull { ri ->
+                runCatching {
+                    Triple(ri.activityInfo.packageName, ri.loadLabel(manager).toString(), ri.loadIcon(manager))
+                }.getOrNull()
+            }
     }.getOrDefault(emptyList())
 
     private fun iconBytes(drawable: Drawable): ByteArray {

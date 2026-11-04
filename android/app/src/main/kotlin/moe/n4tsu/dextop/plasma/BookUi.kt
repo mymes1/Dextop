@@ -990,9 +990,14 @@ internal class BookUi(
      * free one, and shortcuts of deselected or uninstalled apps are removed.
      * Needs a laid-out [area]; called from [place] and the store listener.
      */
+    private var lastSyncLog = ""
+
     fun syncHomeApps() {
         if (area.width() <= 1 || area.height() <= 1) {
-            OperationLog.w(context, "BookHome", "syncHomeApps skipped: display area not known yet area=$area")
+            if (lastSyncLog != "no-area") {
+                lastSyncLog = "no-area"
+                OperationLog.w(context, "BookHome", "syncHomeApps skipped: display area not known yet area=$area")
+            }
             return
         }
         val home = BookStore.homeApps(context)
@@ -1008,11 +1013,15 @@ internal class BookUi(
         val placed = BookStore.shortcuts(context).map { it.packageName }.toSet()
         val missing = home.filter { it !in placed && isInstalled(it) }
         missing.forEach { addShortcut(it, null) }
-        OperationLog.i(
-            context, "BookHome",
-            "syncHomeApps area=${area.width()}x${area.height()} home=${home.size} shortcuts=${current.size} " +
-                "removed=${removed.size} placed=${missing.size} grid=${gridColumns()}x${gridRows()}"
-        )
+        // Log on change only (this runs from the poll); include whether each
+        // selected app can actually be resolved for rendering.
+        val line = "area=${area.width()}x${area.height()} home=$home shortcuts=${current.size} " +
+            "removed=${removed.size} placed=${missing.size} grid=${gridColumns()}x${gridRows()} " +
+            "renderable=${home.count { packageApp(it) != null }}/${home.size}"
+        if (line != lastSyncLog) {
+            lastSyncLog = line
+            OperationLog.i(context, "BookHome", "syncHomeApps $line")
+        }
     }
 
     /** The app for a desktop shortcut even before the launcher's list has loaded. */

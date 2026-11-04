@@ -240,16 +240,15 @@ internal class PlasmaAppRepository(private val context: Context) {
     /**
      * Every launchable app. The plain query (flags=0) is tried first: it is
      * universally supported and QUERY_ALL_PACKAGES already disables visibility
-     * filtering. Some vendor firmware (Samsung One UI without DeX, e.g.
-     * SM-X110) hangs, throws on or empties the MATCH_ALL query, so that is only
-     * tried when the plain query comes back empty, and finally installed
-     * applications are enumerated via their launch intents.
+     * filtering. On some vendor firmware (Samsung One UI without DeX, e.g.
+     * SM-X110) the service process gets an empty plain query and the MATCH_ALL
+     * query HANGS for tens of seconds, so the reliable installed-applications
+     * enumeration runs next and MATCH_ALL is only a last resort.
      */
     private fun loadApps(): List<PlasmaApp> = runCatching {
         val manager = context.packageManager
         val query = Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_LAUNCHER)
         val resolved = runCatching { manager.queryIntentActivities(query, 0) }.getOrNull()
-            ?.ifEmpty { runCatching { manager.queryIntentActivities(query, PackageManager.MATCH_ALL) }.getOrNull().orEmpty() }
             .orEmpty()
         if (resolved.isNotEmpty()) {
             // One broken icon/label must not drop the whole list.
@@ -267,7 +266,7 @@ internal class PlasmaAppRepository(private val context: Context) {
                 .distinctBy { it.packageName }
                 .sortedBy { it.label.lowercase() }
         }
-        runCatching { manager.getInstalledApplications(0) }.getOrNull().orEmpty()
+        val enumerated = runCatching { manager.getInstalledApplications(0) }.getOrNull().orEmpty()
             .mapNotNull { info ->
                 runCatching {
                     if (manager.getLaunchIntentForPackage(info.packageName) == null) null else PlasmaApp(
@@ -275,6 +274,22 @@ internal class PlasmaAppRepository(private val context: Context) {
                         manager.getApplicationLabel(info).toString(),
                         manager.getApplicationIcon(info),
                         info.category,
+                    )
+                }.getOrNull()
+            }
+            .distinctBy { it.packageName }
+            .sortedBy { it.label.lowercase() }
+        if (enumerated.isNotEmpty()) return@runCatching enumerated
+        // Last resort only: on Samsung One UI without DeX this call can hang.
+        return@runCatching runCatching { manager.queryIntentActivities(query, PackageManager.MATCH_ALL) }.getOrNull()
+            .orEmpty()
+            .mapNotNull { ri ->
+                runCatching {
+                    PlasmaApp(
+                        ri.activityInfo.packageName,
+                        ri.loadLabel(manager).toString(),
+                        ri.loadIcon(manager),
+                        ri.activityInfo.applicationInfo.category,
                     )
                 }.getOrNull()
             }
