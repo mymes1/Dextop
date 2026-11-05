@@ -12171,7 +12171,6 @@ class MirrorService : AccessibilityService(), SurfaceHolder.Callback {
                     source.metaState
                 )
             }
-            val actionMasked = event.actionMasked
             val accepted = inputDispatcher.send(event, targetDisplayId)
             val snapshot = MotionEvent.obtain(event)
             event.recycle()
