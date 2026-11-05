@@ -10646,7 +10646,16 @@ class MirrorService : AccessibilityService(), SurfaceHolder.Callback {
             return true
         }
         if (useDirectTouch && experimentalMultiTouch) {
-            injectDirectTouch(event)
+            if (!injectDirectTouch(event) && event.actionMasked == MotionEvent.ACTION_DOWN) {
+                // A rejected DOWN is usually transient (the target window is
+                // still taking focus right after a launch or tap): retry once
+                // so a single tap is never lost and has to be repeated.
+                val retry = MotionEvent.obtain(event)
+                Handler(Looper.getMainLooper()).postDelayed({
+                    runCatching { injectDirectTouch(retry) }
+                    retry.recycle()
+                }, 80L)
+            }
             if (imeDirectTouch && (event.actionMasked == MotionEvent.ACTION_UP ||
                     event.actionMasked == MotionEvent.ACTION_CANCEL)
             ) {
@@ -12078,11 +12087,11 @@ class MirrorService : AccessibilityService(), SurfaceHolder.Callback {
         }.onFailure { Log.e(logTag, "input injection failed", it) }
     }
 
-    private fun injectDirectTouch(source: MotionEvent, actionOverride: Int? = null) {
-        if (targetDisplayId < 0) return
-        val view = surfaceView ?: return
-        if (view.width <= 0 || view.height <= 0) return
-        runCatching {
+    private fun injectDirectTouch(source: MotionEvent, actionOverride: Int? = null): Boolean {
+        if (targetDisplayId < 0) return false
+        val view = surfaceView ?: return false
+        if (view.width <= 0 || view.height <= 0) return false
+        return runCatching {
             val action = actionOverride ?: source.action
             val actionMasked = action and MotionEvent.ACTION_MASK
             if (actionMasked == MotionEvent.ACTION_DOWN) {
@@ -12196,9 +12205,10 @@ class MirrorService : AccessibilityService(), SurfaceHolder.Callback {
                 directInjectionDownTime = 0L
                 directSourceDownTime = 0L
             }
+            true
         }.onFailure { error ->
             Log.e(logTag, "multi-touch injection failed", error)
-        }
+        }.getOrDefault(false)
     }
 
     /**

@@ -138,6 +138,8 @@ internal interface BookChrome {
     fun notifications(): List<DextopNotification>
     /** Book's own windows (Settings, Widgets) take the keyboard while one is open. */
     fun setBookFocus(wanted: Boolean)
+    /** Hides the on-screen keyboard on the Dextop display (Android apps and Linux containers). */
+    fun hideKeyboard()
     /** Lets Dextop bind app widgets (through the privileged shell). */
     fun grantWidgetBinding()
     /** An installed Linux container, or null. */
@@ -679,6 +681,11 @@ internal class BookUi(
                         color = Color.White, maxLines = 1, modifier = Modifier.basicMarquee())
                 }
             }
+            Box(
+                Modifier.size(32.dp).clip(CircleShape)
+                    .clickable { chrome.hideKeyboard() },
+                contentAlignment = Alignment.Center,
+            ) { Sym("keyboard_hide", Color.White, 18.dp) }
             Box(
                 Modifier.size(32.dp).clip(CircleShape)
                     .background(if (openPanel == "notifications") Color.White.copy(alpha = .18f) else Color.Transparent)

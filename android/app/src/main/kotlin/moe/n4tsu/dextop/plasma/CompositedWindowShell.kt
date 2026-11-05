@@ -4149,6 +4149,27 @@ internal abstract class CompositedWindowShell(
         updateShellFocus()
     }
 
+    /**
+     * Hides the on-screen keyboard on the Dextop display: the system soft
+     * keyboard shown for an Android app's text field, and the Linux
+     * container's keyboard. The status bar's keyboard button calls this —
+     * there is otherwise no way to dismiss the IME on the virtual display.
+     */
+    override fun hideKeyboard() {
+        handler.post {
+            hideLinuxKeyboard()
+            runCatching {
+                displayContext.getSystemService(android.view.inputmethod.InputMethodManager::class.java)
+                    ?.hideSoftInputFromWindow(root.windowToken, 0)
+            }.onFailure { host.log("hide keyboard (display IMM) failed: ${it.message}") }
+            // Fallback for firmware where the window token is not accepted:
+            // the shell command hides the IME on the focused display.
+            runCatching { host.privilegedCommand("ime", "hide") }
+                .onFailure { host.log("hide keyboard (ime hide) failed: ${it.message}") }
+            host.log("hide keyboard requested")
+        }
+    }
+
     /** Dextop may bind app widgets: granted as the privileged shell (some builds lack `cmd appwidget`). */
     override fun grantWidgetBinding() = systemExecutor.execute {
         runCatching {
