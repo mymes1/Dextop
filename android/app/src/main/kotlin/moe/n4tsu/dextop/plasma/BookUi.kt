@@ -1054,6 +1054,8 @@ internal class BookUi(
         appWidgets.delete(id)
     }
 
+    private var lastDesktopLog = ""
+
     @Composable
     private fun Desktop() {
         if (!shown) return
@@ -1066,7 +1068,15 @@ internal class BookUi(
                     colors.onPrimaryContainer.toArgb(), colors.primaryContainer.toArgb()), 0)
             }
         }
-        Box(Modifier.fillMaxSize()) {
+        Box(Modifier.fillMaxSize().onGloballyPositioned { c ->
+            // Prove the desktop view is actually laid out, and with how many
+            // icons it is drawing (diagnoses "selected but not shown").
+            val line = "desktop laid out ${c.size.width}x${c.size.height} icons=$desktopIcons shortcuts=${shortcuts.size} repoApps=${launcher.apps().size}"
+            if (line != lastDesktopLog) {
+                lastDesktopLog = line
+                OperationLog.i(context, "BookHome", line)
+            }
+        }) {
             // While a widget is being resized, a click anywhere else on the desktop ends it.
             if (resizing != null) Box(Modifier.fillMaxSize().pointerInput(Unit) {
                 detectTapGestures { resizing = null; resizeSpot = null }
