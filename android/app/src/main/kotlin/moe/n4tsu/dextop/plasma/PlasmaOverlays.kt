@@ -61,6 +61,8 @@ internal class OverlayLayer(
                 overlay.placed = true
                 view.invalidate()
                 Log.i(tag, "Auto overlay attached display=$displayId attempt=$attempt")
+                OperationLog.i(context, "PlasmaOverlay",
+                    "overlay attached via accessibility overlay display=$displayId attempt=$attempt")
                 return
             }
             if (attempt < 7) {
@@ -68,6 +70,8 @@ internal class OverlayLayer(
                     (50L shl attempt).coerceAtMost(1_000L))
             } else if (result != null) {
                 Log.e(tag, "Auto overlay attachment failed display=$displayId result=$result")
+                OperationLog.e(context, "PlasmaOverlay",
+                    "overlay attachment failed display=$displayId result=$result", null)
             }
         }
         try {
@@ -130,6 +134,7 @@ internal class OverlayLayer(
         if (watchOutside) flags = flags or WindowManager.LayoutParams.FLAG_WATCH_OUTSIDE_TOUCH
         if (focusable) flags = flags or WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL
         params.flags = flags
+        val firstShow = !attached.containsKey(view)
         // Auto is composed in the display's accessibility overlay container,
         // above Samsung's system-decoration container (including DexTaskbarWindow).
         // WindowManager's accessibility window type alone is insufficient on One UI.
@@ -161,16 +166,37 @@ internal class OverlayLayer(
                 }
             }
             attached[view] = params
+            if (firstShow) OperationLog.i(
+                context, "PlasmaOverlay",
+                "overlay shown hosted title=${params.title} display=${context.display?.displayId} " +
+                    "type=$windowType ${bounds.width()}x${bounds.height()}"
+            )
             return
         }
         runCatching {
-            if (attached.containsKey(view)) {
-                windowManager.updateViewLayout(view, params)
-            } else {
+            if (firstShow) {
                 windowManager.addView(view, params)
                 attached[view] = params
+            } else {
+                windowManager.updateViewLayout(view, params)
             }
-        }.onFailure { Log.w(tag, "overlay ${params.title} update failed", it) }
+        }.onSuccess {
+            if (firstShow) OperationLog.i(
+                context, "PlasmaOverlay",
+                "overlay shown title=${params.title} display=${context.display?.displayId} " +
+                    "type=$windowType ${bounds.width()}x${bounds.height()}"
+            )
+        }.onFailure {
+            Log.w(tag, "overlay ${params.title} update failed", it)
+            // WindowManager rejects accessibility overlays on TYPE_OVERLAY
+            // displays before Android 16 with BadTokenException; that failure
+            // must reach the session log, not only logcat.
+            OperationLog.e(
+                context, "PlasmaOverlay",
+                "overlay show failed title=${params.title} display=${context.display?.displayId} type=$windowType",
+                it
+            )
+        }
     }
 
     fun hide(view: View?) {

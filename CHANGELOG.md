@@ -15,6 +15,7 @@
 - Dextop Book を初めて起動したときホーム画面にアプリが1つも表示されなかった問題を修正しました。初回起動時に定番アプリ（ブラウザ、ファイル、設定など）をホーム画面へ自動で配置します。また、ランチャーのアプリ一覧がまだ読み込まれていない場合でも、デスクトップのアイコンが PackageManager から取得した情報で表示されるようにしました。
 - 一部の端末（DeX非対応の Samsung One UI など）で `MATCH_ALL` 付きのアプリ一覧クエリが空を返す場合に、通常のクエリへフォールバックするようにしました。
 - アプリ一覧の取得をさらに堅牢にしました。まず安全な通常クエリ（flags=0）、空の場合はインストール済みアプリの列挙（launch intent 付き）へとフォールバックし、`MATCH_ALL` クエリは最後の手段としてのみ使います（Samsung One UI（DeX非対応）の一部プロセスでは通常クエリが空を返し、`MATCH_ALL` クエリが数十秒ハングするため、ランチャーが空のままになる時間をなくしました）。初回のホーム画面シードはバックグラウンドで行い（シェル起動をブロックしない）、空のまま保存された場合のみ再シードします。シード内容・配置・取得件数・各アプリのレンダリング可否をオペレーションログに記録します。
+- Android 15 以下の端末で Dextop Book の画面が黒いままカーソルしか表示されなかった問題を修正しました。`overlay_display_devices` で作られるオーバーレイディスプレイ（Display.TYPE_OVERLAY）では Android 16 未満でアクセシビリティオーバーレイのトークンが発行されず、シェルの `TYPE_ACCESSIBILITY_OVERLAY` ウィンドウが BadTokenException で拒否されていました（失敗は従来 logcat にしか記録されませんでした）。Android 15 以下ではシェルを `TYPE_APPLICATION_OVERLAY` で描画するようにし（`plasmaApplicationOverlay`）、オーバーレイの表示・拒否をセッションログにも記録するようにしました。
 
 ### English
 
@@ -29,6 +30,7 @@
 - Fixed the Dextop Book home screen showing no apps on first start: the usual apps (browser, files, settings, …) are now placed on the desktop automatically, and desktop icons fall back to PackageManager data while the launcher's app list is still loading.
 - On some devices (Samsung One UI without DeX), the launcher query with `MATCH_ALL` can return nothing; it now falls back to the plain query so the app list is never empty.
 - Made app-list loading robust end to end: the universally safe plain query (flags=0) is tried first, then `MATCH_ALL` only if that comes back empty, and finally installed apps are enumerated via their launch intents — on Samsung One UI without DeX the `MATCH_ALL` query can hang, throw or return nothing, so it is never used on the startup path. The launcher, the Book desktop, the phone home screen and the settings picker all use this path and can never end up silently empty. First-run home-screen seeding now runs in the background (it can never block shell startup), an empty list saved while queries were broken no longer blocks re-seeding, and seeding/placement/query counts are written to the operation log for on-device diagnosis.
+- Fixed the Dextop Book screen staying black with only a cursor visible on Android 15 and older. Overlay displays created via `overlay_display_devices` (Display.TYPE_OVERLAY) get no accessibility overlay token before Android 16, so the shell's `TYPE_ACCESSIBILITY_OVERLAY` window was rejected with a BadTokenException — and that failure was only written to logcat, never to the session log. On API 35 and below the shell is now drawn as `TYPE_APPLICATION_OVERLAY` (`plasmaApplicationOverlay`), and overlay show/attach success and failure are recorded in the session log.
 
 ## 1.7.0
 

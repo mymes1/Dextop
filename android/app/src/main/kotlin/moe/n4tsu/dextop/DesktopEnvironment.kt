@@ -321,6 +321,16 @@ internal object DesktopEnvironmentRegistry {
                 DesktopStartupMode.COMPAT_WINDOWING
             },
             displayChromeMode = DisplayChromeMode.VISIBLE,
+            // The phone desktop is an overlay display (Display.TYPE_OVERLAY)
+            // unless directPlasmaDisplay reroutes it into an owned virtual
+            // display. Before Android 16 AccessibilityManagerService issues no
+            // accessibility overlay token for TYPE_OVERLAY displays, so the
+            // shell's TYPE_ACCESSIBILITY_OVERLAY window is rejected with
+            // BadTokenException and nothing is ever drawn (black screen with
+            // only the mirrored cursor). Draw the shell as
+            // TYPE_APPLICATION_OVERLAY there instead; see
+            // plasmaApplicationOverlay and the SM-X110 reference device.
+            plasmaApplicationOverlay = identity.sdk <= 35,
             // Verification is always safe: a display the platform already
             // runs in freeform is left alone.
             requiresFreeformDisplay = true,
