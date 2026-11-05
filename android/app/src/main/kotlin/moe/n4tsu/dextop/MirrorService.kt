@@ -161,6 +161,12 @@ class MirrorService : AccessibilityService(), SurfaceHolder.Callback {
         /** Explicit compatibility switch for the previous software cursor. */
         private const val KEY_SOFTWARE_CURSOR_FALLBACK = "software_cursor_fallback"
 
+        /** Devices at or below this RAM budget render the session at 75%. */
+        private const val LOW_END_RAM_MB = 4096L
+
+        /** Render scale applied to width/height and density on low-end devices. */
+        private const val LOW_END_RENDER_SCALE = 0.75f
+
         /** Persisted three-way pointer profile; old installs use the fallback key. */
         private const val KEY_VIRTUAL_POINTER_PROFILE = "virtual_pointer_profile"
         private const val KEY_ROTATE_180_LANDSCAPE = "rotate_180_landscape"
@@ -3234,7 +3240,46 @@ class MirrorService : AccessibilityService(), SurfaceHolder.Callback {
         // Laptop mode is applied only after its two panes have completed layout.
         // Pre-halving a recovered configuration attaches half-height content to
         // a still-full-height Surface and produces a narrow centred strip.
-        return config
+        return scaleConfigForLowEndDevice(config)
+    }
+
+    /**
+     * Low-end devices (4 GiB RAM or less, e.g. Galaxy Tab A9 / SM-X110) cannot
+     * composite a full-resolution virtual display plus its phone mirror at a
+     * smooth frame rate. When the implicit "device" resolution is used (the
+     * user never picked a custom profile), render the session at 75% in both
+     * pixels and density: the dp layout is unchanged, only the raster is
+     * smaller and the mirror upscales it back to the phone panel.
+     */
+    private fun scaleConfigForLowEndDevice(config: Config): Config {
+        if (config.autoOnly || !lowEndDevice) return config
+        val prefs = getSharedPreferences("FlutterSharedPreferences", MODE_PRIVATE)
+        if (prefs.getString("flutter.selected_resolution_id", "device") != "device") return config
+        if (prefs.getBoolean("flutter.disable_low_end_render_scale", false)) return config
+        val scale = LOW_END_RENDER_SCALE
+        val width = (config.width * scale).roundToInt().coerceAtLeast(640)
+        val height = (config.height * scale).roundToInt().coerceAtLeast(360)
+        val density = (config.density * scale).roundToInt().coerceAtLeast(120)
+        if (width == config.width && height == config.height && density == config.density) return config
+        OperationLog.i(
+            this, "DisplayBackend",
+            "low-end device totalRamMb=$lowEndRamMb renderScale=$scale " +
+                    "session ${config.width}x${config.height}/${config.density} -> ${width}x${height}/$density"
+        )
+        return config.copy(width = width, height = height, density = density)
+    }
+
+    private val lowEndRamMb: Long by lazy {
+        val manager = getSystemService(android.app.ActivityManager::class.java) ?: return@lazy -1L
+        val info = android.app.ActivityManager.MemoryInfo()
+        manager.getMemoryInfo(info)
+        info.totalMem / (1024L * 1024L)
+    }
+
+    private val lowEndDevice: Boolean by lazy {
+        val manager = getSystemService(android.app.ActivityManager::class.java)
+        val lowRam = manager?.isLowRamDevice ?: false
+        lowRam || (lowEndRamMb in 1..LOW_END_RAM_MB)
     }
 
     private fun addWindow() {
@@ -12126,22 +12171,31 @@ class MirrorService : AccessibilityService(), SurfaceHolder.Callback {
                     source.metaState
                 )
             }
-            try {
-                check(inputDispatcher.send(event, targetDisplayId)) {
-                    "InputManager rejected multi-touch event action=${event.actionMasked}"
-                }
-                injectedDirectTouchActive = when (event.actionMasked) {
-                    MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> false
-                    else -> true
-                }
-                lastInjectedDirectTouch?.recycle()
-                lastInjectedDirectTouch = if (injectedDirectTouchActive) MotionEvent.obtain(event) else null
-                if (!injectedDirectTouchActive) {
-                    directInjectionDownTime = 0L
-                    directSourceDownTime = 0L
-                }
-            } finally {
-                event.recycle()
+            val actionMasked = event.actionMasked
+            val accepted = inputDispatcher.send(event, targetDisplayId)
+            val snapshot = MotionEvent.obtain(event)
+            event.recycle()
+            if (!accepted) {
+                // A dropped frame mid-gesture must not leave the target display
+                // holding a pressed finger (dead taps and stuck scrolling in
+                // tap mode): release the previously accepted stream with a
+                // CANCEL that matches its pointer shape.
+                snapshot.recycle()
+                if (injectedDirectTouchActive) cancelInjectedDirectTouch()
+                error("InputManager rejected multi-touch event action=$actionMasked")
+            }
+            injectedDirectTouchActive = when (actionMasked) {
+                MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> false
+                else -> true
+            }
+            lastInjectedDirectTouch?.recycle()
+            lastInjectedDirectTouch = if (injectedDirectTouchActive) snapshot else {
+                snapshot.recycle()
+                null
+            }
+            if (!injectedDirectTouchActive) {
+                directInjectionDownTime = 0L
+                directSourceDownTime = 0L
             }
         }.onFailure { error ->
             Log.e(logTag, "multi-touch injection failed", error)
