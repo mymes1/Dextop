@@ -2122,8 +2122,11 @@ class MirrorService : AccessibilityService(), SurfaceHolder.Callback {
             .remove("flutter.virtual_mouse_dpi")
             .remove("flutter.virtual_mouse_acceleration")
             .apply()
+        // Fresh installs on low-end devices start in tap mode: without a saved
+        // choice, the phone should behave like its normal mode, not like DeX.
+        // An explicit Cursor/Tap choice in the menu always wins once saved.
         directTouch = getSharedPreferences(PREFS, MODE_PRIVATE)
-            .getBoolean(KEY_DIRECT_TOUCH, false)
+            .getBoolean(KEY_DIRECT_TOUCH, lowEndDevice)
         // The overlay routing controls were retired. Leave physical devices
         // under Android's normal display routing instead of changing them.
         routePhysicalMouseToDextop = false

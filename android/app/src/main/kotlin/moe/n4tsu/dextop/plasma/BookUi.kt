@@ -1567,7 +1567,15 @@ internal class BookUi(
                 }
                 val s = screen(last)
                 when {
-                    lifted && !moved -> { endDrag(s.x, s.y, cancel = true); menu?.invoke(s.x, s.y) }
+                    lifted && !moved -> {
+                        endDrag(s.x, s.y, cancel = true)
+                        // Tap mode must feel like a normal touchscreen: a stationary
+                        // press-release is a tap no matter how long it was held (a slow
+                        // tap on a laggy device must still open the app). Only
+                        // holdFirst items (widgets) keep the long-press menu on touch.
+                        if (holdFirst) menu?.invoke(s.x, s.y)
+                        else if (!initialPass) { down.consume(); tap?.invoke() }
+                    }
                     dragging -> endDrag(s.x, s.y)
                     !initialPass -> tap?.invoke()
                 }
