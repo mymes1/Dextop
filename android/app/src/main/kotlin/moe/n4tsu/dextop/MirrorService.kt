@@ -3252,10 +3252,7 @@ class MirrorService : AccessibilityService(), SurfaceHolder.Callback {
      * smaller and the mirror upscales it back to the phone panel.
      */
     private fun scaleConfigForLowEndDevice(config: Config): Config {
-        if (config.autoOnly || !lowEndDevice) return config
-        val prefs = getSharedPreferences("FlutterSharedPreferences", MODE_PRIVATE)
-        if (prefs.getString("flutter.selected_resolution_id", "device") != "device") return config
-        if (prefs.getBoolean("flutter.disable_low_end_render_scale", false)) return config
+        if (config.autoOnly || !lowEndDevice || lowEndScaleDisabled) return config
         val scale = LOW_END_RENDER_SCALE
         val width = (config.width * scale).roundToInt().coerceAtLeast(640)
         val height = (config.height * scale).roundToInt().coerceAtLeast(360)
@@ -3267,6 +3264,45 @@ class MirrorService : AccessibilityService(), SurfaceHolder.Callback {
                     "session ${config.width}x${config.height}/${config.density} -> ${width}x${height}/$density"
         )
         return config.copy(width = width, height = height, density = density)
+    }
+
+    private val lowEndScaleDisabled: Boolean by lazy {
+        getSharedPreferences("FlutterSharedPreferences", MODE_PRIVATE)
+            .getBoolean("flutter.disable_low_end_render_scale", false)
+    }
+
+    /**
+     * Largest session geometry a low-end device may render: the phone panel
+     * times [LOW_END_RENDER_SCALE]. Live resizes (custom resolution chosen
+     * mid-session, the system resizing the overlay display, rotation) are
+     * clamped to this budget in [resizeActiveDisplay], so the render load
+     * cannot jump back to full panel size on a weak device.
+     */
+    private val lowEndLimit: Config by lazy {
+        val display = getSystemService(DisplayManager::class.java).getDisplay(Display.DEFAULT_DISPLAY)
+        val metrics = android.util.DisplayMetrics()
+        @Suppress("DEPRECATION")
+        display?.getRealMetrics(metrics)
+        val longSide = maxOf(metrics.widthPixels, metrics.heightPixels).coerceAtLeast(1)
+        val shortSide = minOf(metrics.widthPixels, metrics.heightPixels).coerceAtLeast(1)
+        Config(
+            (longSide * LOW_END_RENDER_SCALE).roundToInt().coerceAtLeast(640),
+            (shortSide * LOW_END_RENDER_SCALE).roundToInt().coerceAtLeast(360),
+            ((metrics.densityDpi.takeIf { it > 0 } ?: 160) * LOW_END_RENDER_SCALE).roundToInt().coerceAtLeast(120),
+        )
+    }
+
+    /** Clamps a live resize to the low-end render budget; idempotent. */
+    private fun clampToLowEndLimit(next: Config): Config {
+        if (!lowEndDevice || lowEndScaleDisabled || next.autoOnly) return next
+        val limit = lowEndLimit
+        val maxW = if (next.width >= next.height) limit.width else limit.height
+        val maxH = if (next.width >= next.height) limit.height else limit.width
+        return next.copy(
+            width = next.width.coerceAtMost(maxW),
+            height = next.height.coerceAtMost(maxH),
+            density = next.density.coerceAtMost(limit.density),
+        )
     }
 
     private val lowEndRamMb: Long by lazy {
@@ -11113,13 +11149,17 @@ class MirrorService : AccessibilityService(), SurfaceHolder.Callback {
             // boundary when the first phone-surface touch is received as
             // well, including a device that was attached by the laptop deck.
             cancelDesktopTouchStream()
+            val pointerAlive = virtualMouseInputActive() || virtualMouseProcessAlive()
             if (laptopModeActive && laptopKeyboardRequested) {
                 suspendVirtualMouseForLaptopKeyboard()
-            } else {
+            } else if (pointerAlive) {
+                // Only tear the engine down when it is actually running:
+                // stopping it on every touch restarted the privileged input
+                // process per tap and added a hitch to every touch in tap mode.
                 stopVirtualMouse()
             }
             updateVirtualCursorVisibility()
-            OperationLog.i(
+            if (pointerAlive) OperationLog.i(
                 this,
                 "InputRouting",
                 "phone touch surface claimed input; virtual pointer disconnected"
@@ -13504,9 +13544,13 @@ class MirrorService : AccessibilityService(), SurfaceHolder.Callback {
     }
 
     /** Changes the logical size without destroying the virtual display or its tasks. */
-    private fun resizeActiveDisplay(next: Config, reason: String) {
+    private fun resizeActiveDisplay(rawNext: Config, reason: String) {
         if (targetDisplayId < 0) return
         cancelDesktopTouchStream()
+        // On low-end devices no resize source (custom profile, system overlay
+        // resize, rotation) may exceed the render budget; clamping is
+        // idempotent, so an already-scaled config passes through unchanged.
+        val next = clampToLowEndLimit(rawNext)
         val oldWidth = targetWidth.coerceAtLeast(1)
         val oldHeight = targetHeight.coerceAtLeast(1)
         val normalizedCursorX = cursorX / oldWidth
