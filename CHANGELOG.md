@@ -21,6 +21,7 @@
 - タップモードでタップがたまに効かなくなったりスクロールがおかしくなったりする問題を修正しました。仮想ディスプレイへのタッチ注入が途中で拒否されたとき、それまでに受理済みのストリームを一致するポインタ構成の CANCEL で解放するようにしました。これまではターゲット側に「押されたままの指」が残り、スクロールの stuck やタップの無反応が発生していました。また、タップの DOWN が一時的に拒否された場合は短い遅延をおいて1回だけ再送するようにし、「連打しないと反応しない」場面を減らしました。
 - Dextop Book のステータスバーにキーボードを閉じるボタンを追加しました。アプリのテキスト入力で仮想ディスプレイに表示されたソフトキーボードを、ボタン一つで閉じられるようにしました（Linux コンテナのキーボードも閉じます）。
 - タップモードでゆっくり目のタップがアプリを開かなかった問題を修正しました。デスクトップやランチャーのアイコンでは、押してから長押し判定時間（約0.5秒）を超えても指を動かさずに離すと長押しメニュー扱いになり、スクロールは動くのにタップだけ反応しない状態になっていました。指を動かさずに離した場合は押していた時間に関わらずタップとして扱うようにしたため、通常のタッチ画面と同じようにタップでアプリが開きます（長押しメニューはウィジェットでのみ従来どおり動作します）。また、低スペック端末（RAM 4GB 以下）では、入力モードを一度も選んでいない場合の初期値をタップモードにしました。インストール直後は DeX 風のカーソルモードではなく通常の画面と同じ操作感で起動します。メニューで「カーソル」を選んだ場合は従来どおり保存されます。
+- タップモードでタップが反応しない問題の調査用に、仮想ディスプレイ上のシェルがタッチの DOWN を受け取ったかどうか（ShellInput）と、デスクトップ/ランチャーのアイコンへのジェスチャがタップとして処理されたか（BookGesture）をセッションログに記録するようにしました。
 
 ### English
 
@@ -41,6 +42,7 @@
 - Fixed tap mode occasionally dropping taps or scrolling erratically: when a touch frame injected into the virtual display is rejected mid-gesture, the previously accepted stream is now released with a matching CANCEL, so the target no longer keeps a "pressed finger" that caused stuck scrolling and dead taps. A transiently rejected tap DOWN is also retried once after a short delay, so a single tap no longer has to be repeated.
 - Added a "hide keyboard" button to the Dextop Book status bar: the soft keyboard shown on the virtual display while typing in an app can now be dismissed with one tap (the Linux container keyboard is hidden too).
 - Fixed slow taps not opening apps in tap mode: on desktop and launcher icons, a press-release without movement turned into a long-press menu once the hold passed the long-press timeout (~0.5 s), so on a laggy device scrolling worked but every tap felt dead. A stationary release is now always a tap, no matter how long it was held (widgets keep their long-press menu). On low-end devices (4 GiB RAM or less) the input mode also now defaults to tap mode when no choice has been saved yet, so a fresh install behaves like the phone's normal mode instead of DeX; a mode picked in the menu is still remembered.
+- Added session-log diagnostics for the tap-mode dead-tap investigation: the shell now logs every touch DOWN it receives on the virtual display (ShellInput), and each desktop/launcher icon gesture is logged with its classification (tap vs long-press menu, BookGesture).
 
 ## 1.7.0
 

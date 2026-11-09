@@ -894,6 +894,16 @@ internal abstract class CompositedWindowShell(
             override fun dispatchGenericMotionEvent(event: MotionEvent): Boolean =
                 activeLinuxContainer()?.let { moe.n4tsu.dextop.linux.LinuxAndroidPads.dispatch(service, it, event) } == true ||
                     super.dispatchGenericMotionEvent(event)
+
+            // Diagnostics: report #9 must show whether an injected tap reaches
+            // the shell window on the virtual display at all.
+            override fun dispatchTouchEvent(event: MotionEvent): Boolean {
+                if (event.actionMasked == MotionEvent.ACTION_DOWN) {
+                    OperationLog.i(service, "ShellInput",
+                        "root DOWN x=${event.x} y=${event.y} source=${event.source} pointers=${event.pointerCount}")
+                }
+                return super.dispatchTouchEvent(event)
+            }
         }.apply {
             clipChildren = false
             isFocusable = true

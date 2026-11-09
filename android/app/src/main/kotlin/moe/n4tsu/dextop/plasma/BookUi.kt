@@ -1513,8 +1513,13 @@ internal class BookUi(
             val pass = if (initialPass) PointerEventPass.Initial else PointerEventPass.Main
             awaitEachGesture {
                 val down = awaitFirstDown(requireUnconsumed = false, pass = pass)
+                // Diagnostics: report #9 must show whether a tap reaches this
+                // gesture handler at all, and what it is classified as.
+                OperationLog.i(context, "BookGesture", "down type=${down.type} pos=${down.position} item=${itemOf()}")
                 // The root of every Book layer is at the screen's origin.
                 fun screen(p: Offset) = coords?.takeIf { it.isAttached }?.localToWindow(p) ?: p
+                fun report(kind: String) =
+                    OperationLog.i(context, "BookGesture", "$kind item=${itemOf()} pos=${down.position}")
                 if (down.type == PointerType.Mouse && currentEvent.buttons.isSecondaryPressed) {
                     down.consume()
                     val s = screen(down.position)
@@ -1534,7 +1539,7 @@ internal class BookUi(
                         @Suppress("UNREACHABLE_CODE") false
                     }
                     when (released) {
-                        true -> { if (!initialPass) { down.consume(); tap?.invoke() }; return@awaitEachGesture }
+                        true -> { if (!initialPass) { report("tap"); down.consume(); tap?.invoke() }; return@awaitEachGesture }
                         false -> return@awaitEachGesture
                         null -> {
                             lifted = true
@@ -1573,11 +1578,11 @@ internal class BookUi(
                         // press-release is a tap no matter how long it was held (a slow
                         // tap on a laggy device must still open the app). Only
                         // holdFirst items (widgets) keep the long-press menu on touch.
-                        if (holdFirst) menu?.invoke(s.x, s.y)
-                        else if (!initialPass) { down.consume(); tap?.invoke() }
+                        if (holdFirst) { report("menu"); menu?.invoke(s.x, s.y) }
+                        else if (!initialPass) { report("tap"); down.consume(); tap?.invoke() }
                     }
                     dragging -> endDrag(s.x, s.y)
-                    !initialPass -> tap?.invoke()
+                    !initialPass -> { report("tap"); tap?.invoke() }
                 }
             }
         }
