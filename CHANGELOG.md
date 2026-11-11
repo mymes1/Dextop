@@ -22,6 +22,7 @@
 - Dextop Book のステータスバーにキーボードを閉じるボタンを追加しました。アプリのテキスト入力で仮想ディスプレイに表示されたソフトキーボードを、ボタン一つで閉じられるようにしました（Linux コンテナのキーボードも閉じます）。
 - タップモードでゆっくり目のタップがアプリを開かなかった問題を修正しました。デスクトップやランチャーのアイコンでは、押してから長押し判定時間（約0.5秒）を超えても指を動かさずに離すと長押しメニュー扱いになり、スクロールは動くのにタップだけ反応しない状態になっていました。指を動かさずに離した場合は押していた時間に関わらずタップとして扱うようにしたため、通常のタッチ画面と同じようにタップでアプリが開きます（長押しメニューはウィジェットでのみ従来どおり動作します）。また、低スペック端末（RAM 4GB 以下）では、入力モードを一度も選んでいない場合の初期値をタップモードにしました。インストール直後は DeX 風のカーソルモードではなく通常の画面と同じ操作感で起動します。メニューで「カーソル」を選んだ場合は従来どおり保存されます。
 - タップモードでタップが反応しない問題の調査用に、仮想ディスプレイ上のシェルがタッチの DOWN を受け取ったかどうか（ShellInput）と、デスクトップ/ランチャーのアイコンへのジェスチャがタップとして処理されたか（BookGesture）をセッションログに記録するようにしました。
+- アプリのウィンドウ内へのタッチ転送を検証可能・堅牢にしました。これまでは `INJECT_ASYNC`（結果を返さないモード）でアプリ固有の仮想ディスプレイへ注入していたため、Samsung の一部ビルドでフレームが静かに捨てられ、ウィンドウ内のタップが一切反応しないのにスクロールだけ動く、という症状がセッションログからは見えませんでした。今後は `WAIT_FOR_RESULT` で注入し、拒否されたフレームはすべてログに記録されます。拒否された DOWN は1回だけ再送され、ジェスチャ途中で拒否された場合は受理済みストリームを一致する CANCEL で解放するため、アプリ側に「押されたままの指」が残りません。
 
 ### English
 
@@ -43,6 +44,7 @@
 - Added a "hide keyboard" button to the Dextop Book status bar: the soft keyboard shown on the virtual display while typing in an app can now be dismissed with one tap (the Linux container keyboard is hidden too).
 - Fixed slow taps not opening apps in tap mode: on desktop and launcher icons, a press-release without movement turned into a long-press menu once the hold passed the long-press timeout (~0.5 s), so on a laggy device scrolling worked but every tap felt dead. A stationary release is now always a tap, no matter how long it was held (widgets keep their long-press menu). On low-end devices (4 GiB RAM or less) the input mode also now defaults to tap mode when no choice has been saved yet, so a fresh install behaves like the phone's normal mode instead of DeX; a mode picked in the menu is still remembered.
 - Added session-log diagnostics for the tap-mode dead-tap investigation: the shell now logs every touch DOWN it receives on the virtual display (ShellInput), and each desktop/launcher icon gesture is logged with its classification (tap vs long-press menu, BookGesture).
+- Made touch forwarding into app windows verifiable and robust. Forwarding used `INJECT_ASYNC` (a mode that returns no result) into each app's own virtual display, so on some Samsung builds frames were silently dropped: taps inside an app window did nothing while scrolling worked, and nothing in the session log showed it. Forwarding now uses `WAIT_FOR_RESULT`, every rejected frame is logged (WindowInput), a rejected DOWN is retried once, and a frame rejected mid-gesture releases the accepted stream with a matching CANCEL so the app is not left with a pressed finger.
 
 ## 1.7.0
 

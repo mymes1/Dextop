@@ -100,7 +100,7 @@ internal abstract class CompositedWindowShell(
         private const val LAUNCH_TIMEOUT_MS = 7_000L
         /** How long a task must stay over a window's own before it gets a window of its own. */
         private const val STACKED_SPLIT_MS = 600L
-        private const val INJECT_ASYNC = 0
+        private const val INJECT_WAIT_FOR_RESULT = 1
         private const val DISPLAY_IME_POLICY_LOCAL = 0
         private const val DISPLAY_IME_POLICY_FALLBACK_DISPLAY = 1
         /** MotionEvent button bits to X button numbers (left, middle, right, back, forward). */
@@ -145,6 +145,9 @@ internal abstract class CompositedWindowShell(
         linuxDisplayUpdates.offer(id, apps, moe.n4tsu.dextop.linux.LinuxDisplayConfiguration.create(w, h, dpi, rate))
     }
     private val inputExecutor = Executors.newSingleThreadExecutor { Thread(it, "DextopPlasmaV2Input") }
+    /** Displays whose forwarded DOWN is currently accepted (accessed on [inputExecutor] only). */
+    private val forwardedDownDisplays = HashSet<Int>()
+    private var lastWindowInputLogAt = 0L
     private val systemExecutor = Executors.newSingleThreadExecutor { Thread(it, "DextopPlasmaV2System") }
     private val systemControls by lazy { PlasmaSystemControls(service) { arguments -> host.privilegedCommand(*arguments) } }
     private val trayWorker by lazy { TrayWorker(systemExecutor, handler) }
@@ -2764,15 +2767,71 @@ internal abstract class CompositedWindowShell(
     }
 
     private fun injectAsync(event: InputEvent, target: Int) {
-        runCatching {
-            inputExecutor.execute {
-                runCatching {
-                    setEventDisplay.invoke(event, target)
-                    injectMethod.invoke(inputService, event, INJECT_ASYNC)
-                }.onFailure { Log.w(TAG, "input injection failed", it) }
-                if (event is MotionEvent) event.recycle()
-            }
+        runCatching { inputExecutor.execute { injectForwarded(event, target, allowRetry = true) } }
+    }
+
+    /**
+     * Forwards a shell event into a window's own display with WAIT_FOR_RESULT. ASYNC
+     * mode silently drops frames on some Samsung builds, which made taps inside app
+     * windows vanish without a trace; a rejected frame is now reported, a rejected
+     * DOWN is retried once, and a rejected mid-gesture frame releases the accepted
+     * stream with a matching CANCEL so the app is not left with a pressed finger.
+     */
+    private fun injectForwarded(event: InputEvent, target: Int, allowRetry: Boolean) {
+        var accepted = false
+        var failure: Throwable? = null
+        try {
+            setEventDisplay.invoke(event, target)
+            accepted = injectMethod.invoke(inputService, event, INJECT_WAIT_FOR_RESULT) as Boolean
+        } catch (error: Throwable) {
+            failure = error
         }
+        reportWindowInput(event, target, accepted, failure)
+        val motion = event as? MotionEvent ?: return
+        val action = motion.actionMasked
+        if (accepted) {
+            when (action) {
+                MotionEvent.ACTION_DOWN -> forwardedDownDisplays.add(target)
+                MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> forwardedDownDisplays.remove(target)
+            }
+            motion.recycle()
+            return
+        }
+        if (action == MotionEvent.ACTION_DOWN && allowRetry) {
+            val retry = MotionEvent.obtain(motion)
+            motion.recycle()
+            inputExecutor.execute {
+                Thread.sleep(120L)
+                injectForwarded(retry, target, allowRetry = false)
+            }
+        } else if (action != MotionEvent.ACTION_CANCEL && forwardedDownDisplays.remove(target)) {
+            val cancel = MotionEvent.obtain(motion)
+            cancel.action = MotionEvent.ACTION_CANCEL
+            motion.recycle()
+            inputExecutor.execute { injectForwarded(cancel, target, allowRetry = false) }
+        } else {
+            motion.recycle()
+        }
+    }
+
+    private fun reportWindowInput(event: InputEvent, target: Int, accepted: Boolean, failure: Throwable?) {
+        val motion = event as? MotionEvent
+        val action = motion?.actionMasked ?: (event as? KeyEvent)?.action ?: -1
+        val now = SystemClock.uptimeMillis()
+        // Keep every rejected frame and every gesture boundary; sample continuous motion.
+        val discrete = motion == null || action == MotionEvent.ACTION_DOWN || action == MotionEvent.ACTION_UP ||
+            action == MotionEvent.ACTION_CANCEL || action == MotionEvent.ACTION_SCROLL ||
+            action == MotionEvent.ACTION_BUTTON_PRESS || action == MotionEvent.ACTION_BUTTON_RELEASE
+        if (accepted && !discrete && now - lastWindowInputLogAt < 750L) return
+        lastWindowInputLogAt = now
+        val detail = buildString {
+            append("displayId=$target ${if (accepted) "accepted" else "rejected"} action=$action source=${event.source} ")
+            if (motion != null) append("pointers=${motion.pointerCount} pointX:${motion.x} pointY:${motion.y} ")
+            else if (event is KeyEvent) append("keyCode=${event.keyCode} ")
+            failure?.let { append("failure=${it.javaClass.simpleName}") }
+        }
+        if (accepted) OperationLog.i(service, "WindowInput", detail)
+        else OperationLog.w(service, "WindowInput", detail)
     }
     // endregion
 
