@@ -2750,7 +2750,16 @@ internal abstract class CompositedWindowShell(
             return
         }
         val target = window.displayId
-        if (target < 0 || source.width <= 0 || source.height <= 0 || overviewActive) return
+        if (target < 0 || source.width <= 0 || source.height <= 0 || overviewActive) {
+            // A tap on a window whose display is not ready yet used to vanish without a
+            // trace; make every dropped gesture boundary visible in the session report.
+            if (event.actionMasked == MotionEvent.ACTION_DOWN || event.actionMasked == MotionEvent.ACTION_UP) {
+                OperationLog.w(service, "WindowInput",
+                    "dropped window=${window.id} pkg=${window.packageName} action=${event.actionMasked} " +
+                        "target=$target source=${source.width}x${source.height} overview=$overviewActive closing=${window.closing}")
+            }
+            return
+        }
         val matrix = android.graphics.Matrix()
         matrix.setScale(window.displayWidth / source.width.toFloat(), window.displayHeight / source.height.toFloat())
         if (event.actionMasked == MotionEvent.ACTION_SCROLL && activeId != window.id) {

@@ -36,7 +36,6 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.basicMarquee
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.gestures.detectDragGestures
@@ -832,9 +831,9 @@ internal class BookUi(
                             if (inside) showTooltip(entry.label, anchor) else hideTooltip()
                         },
                     )
-                    .combinedClickable(
-                        onLongClick = { hideTooltip(); panel.onTaskContextMenu(entry, anchor) },
+                    .bookClickable(
                         onClick = { hideTooltip(); panel.onTaskClicked(entry, anchor) },
+                        onLongClick = { hideTooltip(); panel.onTaskContextMenu(entry, anchor) },
                     ),
                 contentAlignment = Alignment.Center,
             ) { DrawableIcon(entry.icon, 34.dp, if (running || entry.pinned) 255 else 160, Modifier.scale(lift)) }
@@ -1484,6 +1483,39 @@ internal class BookUi(
                         .clip(RoundedCornerShape(24.dp)).background(colors.surfaceContainer), contentAlignment = Alignment.Center) {
                         DrawableIcon(item.preview, with(px) { (minOf(columns, rows) * CELL.value).dp } - 24.dp)
                     }
+                }
+            }
+        }
+    }
+
+    /**
+     * A clickable that behaves like a normal touchscreen: a stationary touch release is a
+     * click no matter how long it was held, so a slow tap on a laggy device still
+     * activates. Moving past the slop does nothing, which keeps scrolling working.
+     * Mouse pointers keep the usual long-click behaviour when [onLongClick] is set.
+     */
+    private fun Modifier.bookClickable(onClick: () -> Unit, onLongClick: (() -> Unit)? = null): Modifier = composed {
+        val click by rememberUpdatedState(onClick)
+        val long by rememberUpdatedState(onLongClick)
+        pointerInput(Unit) {
+            awaitEachGesture {
+                val down = awaitFirstDown(requireUnconsumed = false)
+                val mouse = down.type == PointerType.Mouse
+                val released = withTimeoutOrNull(
+                    if (mouse && long != null) viewConfiguration.longPressTimeoutMillis else Long.MAX_VALUE
+                ) {
+                    while (true) {
+                        val e = awaitPointerEvent()
+                        val c = e.changes.firstOrNull { it.id == down.id } ?: return@withTimeoutOrNull false
+                        if (!c.pressed) return@withTimeoutOrNull true
+                        if ((c.position - down.position).getDistance() > viewConfiguration.touchSlop) return@withTimeoutOrNull false
+                    }
+                    @Suppress("UNREACHABLE_CODE") false
+                }
+                when (released) {
+                    true -> { down.consume(); click() }
+                    null -> long?.let { down.consume(); it() }
+                    false -> Unit
                 }
             }
         }
